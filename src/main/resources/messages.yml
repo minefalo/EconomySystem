@@ -1,0 +1,79 @@
+# ==========================================================
+#  EconomySystem - Nachrichten
+# ==========================================================
+# Farben: &0-&f, &l, &o, &n, &m, &k, &r, Hex: &#RRGGBB
+# Platzhalter werden automatisch ersetzt (z. B. %balance%, %player%).
+# %prefix% kann überall eingefügt werden; ohne %prefix% wird er
+# automatisch vor die Nachricht gesetzt.
+# ==========================================================
+
+prefix: "&4&lBC &r&6EconomySystem&r&c » "
+
+no-permission: "&cDazu hast du keine Berechtigung."
+player-only: "&cDieser Befehl ist nur für Spieler verfügbar."
+player-not-found: "&cDer Spieler &e%player% &cwurde nicht gefunden."
+storage-error: "&cEs gab einen Fehler beim Zugriff auf die Daten. Bitte informiere einen Administrator."
+invalid-amount: "&c„%input%“ ist kein gültiger Betrag."
+amount-too-large: "&cDer Betrag überschreitet das maximale Guthaben von &e%max%&c."
+insufficient-funds: "&cDu hast nicht genug Geld. Dein Guthaben: &e%balance%"
+insufficient-funds-other: "&e%player% &chat nicht genug Geld. Guthaben: &e%balance%"
+
+balance-self: "&7Dein Guthaben: &6%balance%"
+balance-other: "&7Guthaben von &e%player%&7: &6%balance%"
+
+pay-self: "&cDu kannst dir nicht selbst Geld überweisen."
+pay-sent: "&aDu hast &e%player% &6%amount% &agesendet. Neues Guthaben: &6%balance%"
+pay-received: "&aDu hast &6%amount% &avon &e%player% &aerhalten. Neues Guthaben: &6%balance%"
+balance-given: "&aDu hast &e%player% &6%amount% &agegeben. Neues Guthaben: &6%balance%"
+balance-taken: "&aDu hast &e%player% &6%amount% &aabgezogen. Neues Guthaben: &6%balance%"
+balance-set: "&aDas Guthaben von &e%player% &awurde auf &6%balance% &agesetzt."
+
+reload-success: "&aEinstellungen, Nachrichten, Hilfe und Befehle wurden neu geladen."
+
+usage-money: "&cVerwendung: &e/money [Spieler]"
+usage-pay: "&cVerwendung: &e/pay <Spieler> <Betrag>"
+usage-economysystem: "&cVerwendung: &e/economysystem <help|info|reload>"
+usage-admin: "&cVerwendung: &e/economysystem-admin <help|money|zinsen>"
+usage-admin-money: "&cVerwendung: &e/economysystem-admin money <Spieler> <add|remove|set> <Betrag>"
+usage-admin-zinsen: "&cVerwendung: &e/economysystem-admin zinsen <spar|kredit> set <Faktor>"
+
+invalid-page: "&c„%input%“ ist keine gültige Seitenzahl."
+settings-error: "&cDie Einstellungen konnten nicht gespeichert werden. Prüfe die Konsolenausgabe."
+help-empty: "&cEs sind keine Hilfe-Seiten in der help.yml konfiguriert."
+
+unlimited: "unbegrenzt"
+disabled: "deaktiviert"
+
+help:
+  - "&6&lGuthaben"
+  - "&e/money &7- Zeigt dein Guthaben"
+  - "&e/money <Spieler> &7- Zeigt das Guthaben eines Spielers"
+  - "&e/pay <Spieler> <Betrag> &7- Überweist Geld an einen Spieler"
+
+help-admin:
+  - "&6&lEconomySystem"
+  - "&e/economysystem help &7- Zeigt diese Hilfe"
+  - "&e/economysystem info &7- Zeigt Informationen zum System"
+  - "&e/economysystem reload &7- Lädt alle Konfigurationen neu"
+  - "&e/economysystem-admin help &7- Zeigt die Admin-Hilfe (mehrere Seiten)"
+
+info:
+  - "&6&lEconomySystem &7v%version%"
+  - "&7Speicher: &e%storage%"
+  - "&7Währung: &e%currency% &7(%symbol%)"
+  - "&7Nachkommastellen: &e%decimals%"
+  - "&7Startguthaben: &e%starting-balance%"
+  - "&7Maximalguthaben: &e%max-balance%"
+  - "&7Auto-Save: &e%save-interval%"
+  - "&7Konten im Cache: &e%accounts%"
+  - "&7Sparzins: &e%interest-savings% &7(y = a·√x)"
+  - "&7Kreditzins: &e%interest-credit%"
+  - "&7Zinszyklus: &e%interest-cycle%"
+
+balance-reset: "&aDas Guthaben von &e%player% &awurde auf das Startguthaben von &6%balance% &azurückgesetzt."
+interest-set: "&aDer %type% &awurde auf &6%factor% &agesetzt."
+interest-credit-hint: "&7Der Kreditzins gilt ab sofort für neue Kredite."
+interest-factor-invalid: "&cDer Zinsfaktor muss eine Zahl größer als 0 sein."
+interest-type-savings: "Sparzins"
+interest-type-credit: "Kreditzins"
+

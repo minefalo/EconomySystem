@@ -1,0 +1,47 @@
+name: EconomySystem
+description: BigDecimal-Guthaben mit YAML- und MySQL-Speicher
+prefix: EconomySystem
+version: '${version}'
+
+main: de.Minefalo.economySystem.EconomySystem
+api-version: '26.3'
+load: POSTWORLD
+
+authors: [ Minefalo ]
+
+# Wird von Paper automatisch heruntergeladen und geladen.
+# Dadurch funktioniert der MySQL-Speicher ohne zusätzliche Installation.
+libraries:
+  - com.mysql:mysql-connector-j:9.1.0
+
+# Aliase werden in der commands.yml registriert.
+commands:
+  money:
+    description: Zeigt dein Guthaben oder das eines Spielers an.
+    usage: /money [Spieler]
+  pay:
+    description: Überweist Geld an einen anderen Spieler.
+    usage: /pay <Spieler> <Betrag>
+  economysystem:
+    description: Hauptbefehl für Hilfe, Informationen und Reload.
+    usage: /economysystem <help|info|reload>
+  economysystem-admin:
+    description: Admin-Befehl für Geldverwaltung und Zinsen.
+    usage: /economysystem-admin <help|money|zinsen>
+
+permissions:
+  economysystem.balance:
+    description: Erlaubt das Anzeigen des eigenen Guthabens.
+    default: true
+  economysystem.balance.others:
+    description: Erlaubt das Anzeigen fremder Guthaben.
+    default: op
+  economysystem.pay:
+    description: Erlaubt das Überweisen von Geld an andere Spieler.
+    default: true
+  economysystem.admin:
+    description: Erlaubt die Geldverwaltung und das Setzen der Zinsfaktoren.
+    default: op
+  economysystem.reload:
+    description: Erlaubt das Neuladen der Konfiguration.
+    default: op

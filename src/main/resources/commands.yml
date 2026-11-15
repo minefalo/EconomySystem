@@ -1,0 +1,34 @@
+# ==========================================================
+#  EconomySystem - Befehle und Aliase
+# ==========================================================
+# Hier können für alle Befehle zusätzliche Aliase registriert werden.
+# Die eigentlichen Befehlsnamen (money, pay, economysystem,
+# economysystem-admin) stehen in der plugin.yml und bleiben immer erhalten.
+#
+# Regeln für Aliase:
+#   - nur a-z, 0-9, _ und - (maximal 32 Zeichen)
+#   - keine Leerzeichen
+#   - bereits belegte Befehle/Aliase werden mit einer Warnung übersprungen
+# ==========================================================
+
+commands:
+  money:
+    aliases:
+      - geld
+      - balance
+      - coins
+
+  pay:
+    aliases:
+      - zahlen
+      - ueberweisen
+
+  economysystem:
+    aliases:
+      - es
+      - ecoadmin
+
+  economysystem-admin:
+    aliases:
+      - esa
+      - ecoadm

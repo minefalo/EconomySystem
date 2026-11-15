@@ -1,0 +1,74 @@
+# ==========================================================
+#  EconomySystem - Einstellungen
+# ==========================================================
+
+currency:
+  # Anzeigename der Währung (z. B. in Nachrichten über %currency%)
+  name: "Coins"
+
+  # Symbol der Währung
+  symbol: "$"
+
+  # Anzeigeformat der Beträge.
+  # Platzhalter: %symbol%, %amount%, %name%
+  format: "%symbol%%amount%"
+
+  # Zahlenformat (Java DecimalFormat-Pattern)
+  number-format: "#,##0.00"
+
+  # Locale für Trennzeichen (z. B. de-DE -> 1.234,56)
+  locale: "de-DE"
+
+  # Nachkommastellen (0 - 8)
+  decimals: 2
+
+  # Rundungsmodus:
+  # UP, DOWN, CEILING, FLOOR, HALF_UP, HALF_DOWN, HALF_EVEN, UNNECESSARY
+  rounding: HALF_UP
+
+  # Startguthaben für neue Spieler
+  starting-balance: "100.00"
+
+  # Maximales Guthaben ("-1" = unbegrenzt)
+  max-balance: "1000000000.00"
+
+interest:
+  # Zinszyklus automatisch ausführen
+  enabled: true
+
+  # Uhrzeit des ersten Laufs (Serverzeit, Format HH:mm)
+  start-time: "00:01"
+
+  # Abstand zwischen zwei Zinszyklen in Minuten
+  # 1440 = täglich, 10080 = wöchentlich
+  interval-minutes: 1440
+
+  # Faktoren a der Blockcraft-Wirtschaftsformel y = a * sqrt(x)
+  factors:
+    # Sparzins - wird am Zyklusende allen Konten gutgeschrieben
+    spar: "1.3"
+    # Kreditzins - gilt ab der Änderung für neue Kredite
+    kredit: "1.3"
+
+storage:
+  # Speicherart: YAML oder MYSQL
+  type: YAML
+
+  # Intervall in Sekunden, in dem geänderte Konten gespeichert werden.
+  # 0 = kein automatisches Speichern (nur beim Verlassen/Stoppen des Servers)
+  save-interval-seconds: 300
+
+  yaml:
+    # Ordner (relativ zum Plugin-Ordner), in dem die Konten liegen
+    folder: "accounts"
+
+  mysql:
+    host: "localhost"
+    port: 3306
+    database: "minecraft"
+    username: "root"
+    password: ""
+    # Präfix der Tabelle (nur A-Z, a-z, 0-9 und _)
+    table-prefix: "economy_"
+    use-ssl: false
+    connection-timeout-ms: 5000
