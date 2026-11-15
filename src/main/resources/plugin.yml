@@ -6,6 +6,7 @@ version: '${version}'
 main: de.Minefalo.economySystem.EconomySystem
 api-version: '26.3'
 load: POSTWORLD
+softdepend: [ PlaceholderAPI ]
 
 authors: [ Minefalo ]
 

@@ -13,6 +13,7 @@ import de.Minefalo.economySystem.economy.EconomyService;
 import de.Minefalo.economySystem.economy.InterestScheduler;
 import de.Minefalo.economySystem.help.HelpBook;
 import de.Minefalo.economySystem.listener.PlayerConnectionListener;
+import de.Minefalo.economySystem.placeholder.PlaceholderHook;
 import de.Minefalo.economySystem.storage.EconomyStorage;
 import de.Minefalo.economySystem.storage.StorageException;
 import de.Minefalo.economySystem.storage.StorageFactory;
@@ -27,6 +28,7 @@ public final class EconomySystem extends JavaPlugin {
     private EconomyStorage storage;
     private EconomyService economy;
     private InterestScheduler interestScheduler;
+    private PlaceholderHook placeholderHook;
     private CommandRegistry commandRegistry;
 
     @Override
@@ -75,8 +77,26 @@ public final class EconomySystem extends JavaPlugin {
         interestScheduler = new InterestScheduler(this);
         interestScheduler.start();
 
+        setupPlaceholders();
+
         getLogger().info("EconomySystem aktiviert (Speicher: " + storage.name()
                 + ", Währung: " + settings.currency().name() + ").");
+    }
+
+    private void setupPlaceholders() {
+        if (getServer().getPluginManager().getPlugin("PlaceholderAPI") == null) {
+            getLogger().info("PlaceholderAPI nicht gefunden - Platzhalter sind deaktiviert.");
+            return;
+        }
+
+        try {
+            placeholderHook = new PlaceholderHook(this);
+            placeholderHook.register();
+            getLogger().info("PlaceholderAPI-Erweiterungen registriert (money, eco, aktuelle, economysystem).");
+        } catch (Throwable throwable) {
+            placeholderHook = null;
+            getLogger().warning("PlaceholderAPI konnte nicht eingebunden werden: " + throwable);
+        }
     }
 
     private boolean registerCommands() {
@@ -101,6 +121,10 @@ public final class EconomySystem extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (placeholderHook != null) {
+            placeholderHook.unregister();
+            placeholderHook = null;
+        }
         if (interestScheduler != null) {
             interestScheduler.stop();
             interestScheduler = null;
@@ -138,6 +162,9 @@ public final class EconomySystem extends JavaPlugin {
         if (economy != null) {
             economy.reload();
         }
+        if (placeholderHook != null) {
+            placeholderHook.reload();
+        }
         if (interestScheduler != null) {
             interestScheduler.reload();
         }
@@ -153,5 +180,15 @@ public final class EconomySystem extends JavaPlugin {
 
     public EconomyService economy() {
         return economy;
+    }
+
+    /**
+     * Verwirft zwischengespeicherte Platzhalterwerte und aktualisiert die
+     * Top-Liste, z. B. nach einem Zinszyklus oder Reload.
+     */
+    public void refreshPlaceholders() {
+        if (placeholderHook != null) {
+            placeholderHook.reload();
+        }
     }
 }

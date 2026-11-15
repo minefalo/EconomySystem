@@ -12,6 +12,7 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -125,6 +126,99 @@ public final class EconomyService {
         Account account = accounts.computeIfAbsent(data.uniqueId(),
                 id -> new Account(id, data.name(), currency().normalize(data.balance())));
         return Optional.of(account);
+    }
+
+    /**
+     * Sucht einen Kontostand asynchron, ohne den Haupt-Thread zu blockieren.
+     * Zuerst wird der Cache geprüft, danach der Speicher.
+     *
+     * @param name Spielername
+     * @return Future mit dem Kontostand, falls ein Konto existiert
+     */
+    public CompletableFuture<Optional<BigDecimal>> balanceAsync(String name) {
+        CompletableFuture<Optional<BigDecimal>> future = new CompletableFuture<>();
+        if (name == null || name.isBlank() || executor.isShutdown()) {
+            future.complete(Optional.empty());
+            return future;
+        }
+
+        try {
+            executor.execute(() -> {
+                try {
+                    Optional<Account> cached = accountByName(name);
+                    if (cached.isPresent()) {
+                        future.complete(Optional.of(cached.get().balance()));
+                        return;
+                    }
+                    future.complete(storage.loadByName(name).map(AccountData::balance));
+                } catch (Throwable throwable) {
+                    future.completeExceptionally(throwable);
+                }
+            });
+        } catch (RuntimeException exception) {
+            future.completeExceptionally(exception);
+        }
+        return future;
+    }
+
+    /**
+     * Liefert die Konten mit dem höchsten Guthaben (absteigend) asynchron.
+     * Cache und Speicher werden zusammengeführt, damit auch offline
+     * gespeicherte Konten berücksichtigt werden.
+     *
+     * @param limit maximale Anzahl der Einträge
+     */
+    public CompletableFuture<List<AccountData>> topAsync(int limit) {
+        CompletableFuture<List<AccountData>> future = new CompletableFuture<>();
+        int maximum = Math.max(1, limit);
+        if (executor.isShutdown()) {
+            future.complete(List.of());
+            return future;
+        }
+
+        try {
+            executor.execute(() -> {
+                try {
+                    Map<UUID, AccountData> balances = new LinkedHashMap<>();
+                    for (AccountData data : storage.loadAll()) {
+                        balances.put(data.uniqueId(), data);
+                    }
+                    for (Account account : accounts.values()) {
+                        balances.put(account.uniqueId(), account.snapshot());
+                    }
+
+                    List<AccountData> top = balances.values().stream()
+                            .filter(data -> data.balance().signum() > 0)
+                            .sorted(Comparator.comparing(AccountData::balance,
+                                            Comparator.reverseOrder())
+                                    .thenComparing(AccountData::name, String.CASE_INSENSITIVE_ORDER))
+                            .limit(maximum)
+                            .toList();
+                    future.complete(top);
+                } catch (Throwable throwable) {
+                    future.completeExceptionally(throwable);
+                }
+            });
+        } catch (RuntimeException exception) {
+            future.completeExceptionally(exception);
+        }
+        return future;
+    }
+
+    private Optional<Account> accountByName(String name) {
+        return accounts.values().stream()
+                .filter(account -> account.name().equalsIgnoreCase(name))
+                .findFirst();
+    }
+
+    /**
+     * Kontostand aus dem Cache, ohne Speicher- oder Bukkit-Zugriff.
+     */
+    public Optional<BigDecimal> cachedBalance(String name) {
+        if (name == null || name.isBlank()) {
+            return Optional.empty();
+        }
+        return accountByName(name).map(Account::balance);
     }
 
     public BigDecimal balance(UUID uniqueId, String name) {

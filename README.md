@@ -23,6 +23,8 @@ MySQL-Speicher, konfigurierbarem Zinszyklus und Admin-Befehlen.
   zeilenweise geschrieben, bestehende Kommentare bleiben erhalten.
 - **Mehrseitige Hilfe** – `/economysystem-admin help` liest `help.yml` und
   blättert per Klick im Chat.
+- **PlaceholderAPI** – optional: Guthaben, Top-Liste und aktueller Sparzins
+  als Platzhalter für Scoreboards, TAB & Co.
 - **Aliase & Reload** – zusätzliche Befehlsnamen über `commands.yml`,
   `/economysystem reload` lädt alle Konfigurationen neu.
 
@@ -33,6 +35,7 @@ MySQL-Speicher, konfigurierbarem Zinszyklus und Admin-Befehlen.
 | Paper-Server | API-Version `26.3` |
 | Java | 25 |
 | Maven (nur zum Bauen) | 3.9+ |
+| PlaceholderAPI | optional |
 
 ## Installation
 
@@ -88,6 +91,42 @@ Die Aliase stehen in `commands.yml` und können dort erweitert werden:
 | `economysystem.pay` | alle | Geld überweisen. |
 | `economysystem.admin` | OP | Geldverwaltung und Zinsfaktoren. |
 | `economysystem.reload` | OP | Konfiguration neu laden. |
+
+## PlaceholderAPI (optional)
+
+PlaceholderAPI wird über `softdepend` automatisch erkannt. Ohne das Plugin
+startet EconomySystem normal, es stehen dann nur keine Platzhalter zur
+Verfügung.
+
+| Platzhalter | Ausgabe |
+| --- | --- |
+| `%money%` | Eigenes Guthaben, formatiert (z. B. `$1.234,56`) |
+| `%money_<Spieler>%` | Guthaben eines Spielers |
+| `%eco_top_<Rang>%` | Formatiertes Guthaben auf diesem Rang |
+| `%eco_top_<Rang>_name%` | Spielername auf diesem Rang |
+| `%eco_top_<Rang>_raw%` | Betrag ohne Währungsformat |
+| `%aktuelle_sparzinsen%` | Absoluter Sparzins für das eigene Guthaben |
+| `%aktuelle_sparzinsen_<Spieler>%` | Absoluter Sparzins für ein fremdes Guthaben |
+
+Zusätzlich gibt es die eindeutig benannte Variante:
+
+| Platzhalter | Ausgabe |
+| --- | --- |
+| `%economysystem_money%` | Eigenes Guthaben |
+| `%economysystem_money_<Spieler>%` | Guthaben eines Spielers |
+| `%economysystem_balance[_<Spieler>]%` | Alternative Schreibweise |
+| `%economysystem_top_<Rang>[_name\|_raw]%` | Top-Liste |
+| `%economysystem_sparzinsen[_<Spieler>]%` | Sparzins absolut |
+
+Hinweise:
+
+- Beträge werden mit dem konfigurierten `currency.format` ausgegeben;
+  `_raw` liefert den reinen `BigDecimal`-String.
+- Die Top-Liste umfasst 50 Plätze und wird alle 60 Sekunden asynchron neu
+  berechnet (auch offline gespeicherte Konten).
+- Offline-Guthaben werden 30 Sekunden zwischengespeichert; Online-Spieler
+  und bereits geladene Konten werden immer live aus dem Cache gelesen.
+- Der Sparzins ist ein **absoluter Betrag** (`y = a · √x`), kein Prozentwert.
 
 ## Konfiguration
 
@@ -154,6 +193,7 @@ src/main/java/de/Minefalo/economySystem/
 ├── economy/      Konten, Service, Zinsberechnung und -scheduler
 ├── help/         Mehrseitige Hilfe
 ├── listener/     Join-Handling
+├── placeholder/  PlaceholderAPI-Erweiterungen
 ├── storage/      YAML- und MySQL-Speicher
 └── util/         Text-/Farb-Helfer
 ```

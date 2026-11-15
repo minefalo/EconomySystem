@@ -89,6 +89,7 @@ public final class InterestScheduler {
                     + " von " + result.accountsChecked() + " Konten verzinst, insgesamt "
                     + plugin.settings().currency().format(result.totalCredited())
                     + " gutgeschrieben.");
+            plugin.refreshPlaceholders();
         });
     }
 
