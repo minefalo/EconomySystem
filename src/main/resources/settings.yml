@@ -2,6 +2,13 @@
 #  EconomySystem - Einstellungen
 # ==========================================================
 
+# Test-Befehle (/economysystem-admin tests ...) freischalten.
+# ACHTUNG: Die Test-Befehle verändern echte Kontostände, indem sie
+# Zinszyklen sofort ausführen. Nur auf Test-/Entwicklungsservern
+# aktivieren.
+tests:
+  enabled: false
+
 currency:
   # Anzeigename der Währung (z. B. in Nachrichten über %currency%)
   name: "Coins"

@@ -46,7 +46,7 @@ public final class InterestScheduler {
     }
 
     /**
-     * Lädt den Zeitplan neu (z. B. nach /economysystem reload).
+     * Lädt den Zeitplan neu (z. B. nach /economysystem-admin reload).
      */
     public void reload() {
         start();

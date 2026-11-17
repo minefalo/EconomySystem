@@ -30,12 +30,19 @@ balance-set: "&aDas Guthaben von &e%player% &awurde auf &6%balance% &agesetzt."
 
 reload-success: "&aEinstellungen, Nachrichten, Hilfe und Befehle wurden neu geladen."
 
+tests-disabled: "&cDie Test-Befehle sind deaktiviert. Setze in der settings.yml &etests.enabled: true&c und lade mit &e/economysystem-admin reload&c neu."
+tests-cycles-invalid: "&cDie Anzahl muss eine ganze Zahl zwischen 1 und %max% sein."
+tests-started: "&7Simuliere &e%cycles% &7Zinszyklen mit dem Sparzins-Faktor &e%factor%&7 ..."
+tests-result: "&a%cycles% Zinszyklen simuliert: &e%credited% &avon &e%checked% &aKonten verzinst, insgesamt &6%total% &agutgeschrieben."
+tests-failed: "&cDie Simulation ist fehlgeschlagen: &e%error%"
+
 usage-money: "&cVerwendung: &e/money [Spieler]"
 usage-pay: "&cVerwendung: &e/pay <Spieler> <Betrag>"
-usage-economysystem: "&cVerwendung: &e/economysystem <help|info|reload>"
-usage-admin: "&cVerwendung: &e/economysystem-admin <help|money|zinsen>"
+usage-economysystem: "&cVerwendung: &e/economysystem help"
+usage-admin: "&cVerwendung: &e/economysystem-admin <help|info|reload|money|zinsen|tests>"
 usage-admin-money: "&cVerwendung: &e/economysystem-admin money <Spieler> <add|remove|set> <Betrag>"
 usage-admin-zinsen: "&cVerwendung: &e/economysystem-admin zinsen <spar|kredit> set <Faktor>"
+usage-admin-tests: "&cVerwendung: &e/economysystem-admin tests zins-zyklus add <Anzahl>"
 
 invalid-page: "&c„%input%“ ist keine gültige Seitenzahl."
 settings-error: "&cDie Einstellungen konnten nicht gespeichert werden. Prüfe die Konsolenausgabe."
@@ -53,9 +60,10 @@ help:
 help-admin:
   - "&6&lEconomySystem"
   - "&e/economysystem help &7- Zeigt diese Hilfe"
-  - "&e/economysystem info &7- Zeigt Informationen zum System"
-  - "&e/economysystem reload &7- Lädt alle Konfigurationen neu"
   - "&e/economysystem-admin help &7- Zeigt die Admin-Hilfe (mehrere Seiten)"
+  - "&e/economysystem-admin info &7- Zeigt Informationen zum System"
+  - "&e/economysystem-admin reload &7- Lädt alle Konfigurationen neu"
+  - "&e/economysystem-admin tests zins-zyklus add <Anzahl> &7- Simuliert Zinszyklen (nur mit tests.enabled)"
 
 info:
   - "&6&lEconomySystem &7v%version%"

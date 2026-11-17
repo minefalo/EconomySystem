@@ -26,7 +26,7 @@ MySQL-Speicher, konfigurierbarem Zinszyklus und Admin-Befehlen.
 - **PlaceholderAPI** – optional: Guthaben, Top-Liste und aktueller Sparzins
   als Platzhalter für Scoreboards, TAB & Co.
 - **Aliase & Reload** – zusätzliche Befehlsnamen über `commands.yml`,
-  `/economysystem reload` lädt alle Konfigurationen neu.
+  `/economysystem-admin reload` lädt alle Konfigurationen neu.
 
 ## Voraussetzungen
 
@@ -49,7 +49,7 @@ MySQL-Speicher, konfigurierbarem Zinszyklus und Admin-Befehlen.
    `plugins/`-Ordner des Servers kopieren.
 3. Server starten – im Plugin-Ordner `plugins/EconomySystem/` werden
    `settings.yml`, `messages.yml`, `commands.yml` und `help.yml` angelegt.
-4. Anpassen und mit `/economysystem reload` neu laden.
+4. Anpassen und mit `/economysystem-admin reload` neu laden.
 
 ## Befehle
 
@@ -58,15 +58,16 @@ MySQL-Speicher, konfigurierbarem Zinszyklus und Admin-Befehlen.
 | `/money [Spieler]` | Zeigt das eigene oder ein fremdes Guthaben. |
 | `/pay <Spieler> <Betrag>` | Überweist Geld an einen anderen Spieler. |
 | `/economysystem help` | Zeigt die allgemeine Hilfe. |
-| `/economysystem info` | Zeigt Speicher, Währung, Zinsen und Zyklus. |
-| `/economysystem reload` | Lädt alle Konfigurationen neu. |
 | `/economysystem-admin help [Seite]` | Zeigt die mehrseitige Admin-Hilfe. |
+| `/economysystem-admin info` | Zeigt Speicher, Währung, Zinsen und Zyklus. |
+| `/economysystem-admin reload` | Lädt alle Konfigurationen neu. |
 | `/economysystem-admin money <Spieler> add <Betrag>` | Schreibt Geld gut. |
 | `/economysystem-admin money <Spieler> remove <Betrag>` | Zieht Geld ab. |
 | `/economysystem-admin money <Spieler> set <Betrag>` | Setzt das Guthaben exakt. |
 | `/economysystem-admin money <Spieler> reset` | Setzt auf das Startguthaben zurück. |
 | `/economysystem-admin zinsen spar set <Faktor>` | Setzt den Sparzins-Faktor `a`. |
 | `/economysystem-admin zinsen kredit set <Faktor>` | Setzt den Kreditzins-Faktor `a`. |
+| `/economysystem-admin tests zins-zyklus add <Anzahl>` | Führt Zinszyklen sofort aus (nur mit `tests.enabled`). |
 
 Beträge akzeptieren `.` und `,` als Dezimaltrennzeichen. Das maximale
 Guthaben aus der `settings.yml` wird immer beachtet.
@@ -89,8 +90,9 @@ Die Aliase stehen in `commands.yml` und können dort erweitert werden:
 | `economysystem.balance` | alle | Eigenes Guthaben anzeigen. |
 | `economysystem.balance.others` | OP | Guthaben anderer Spieler anzeigen. |
 | `economysystem.pay` | alle | Geld überweisen. |
-| `economysystem.admin` | OP | Geldverwaltung und Zinsfaktoren. |
-| `economysystem.reload` | OP | Konfiguration neu laden. |
+| `economysystem.admin` | OP | Admin-Befehle: Geldverwaltung, Zinsen, Info. |
+| `economysystem.reload` | OP | Zusätzlich zu `economysystem.admin` das Neuladen über `/economysystem-admin reload`. |
+| `economysystem.tests` | OP | Zusätzlich zu `economysystem.admin` die Test-Befehle (nur mit `tests.enabled`). |
 
 ## PlaceholderAPI (optional)
 
@@ -100,7 +102,7 @@ Verfügung.
 
 | Platzhalter | Ausgabe |
 | --- | --- |
-| `%money%` | Eigenes Guthaben, formatiert (z. B. `$1.234,56`) |
+| `%money_%` | Eigenes Guthaben, formatiert (z. B. `$1.234,56`) |
 | `%money_<Spieler>%` | Guthaben eines Spielers |
 | `%eco_top_<Rang>%` | Formatiertes Guthaben auf diesem Rang |
 | `%eco_top_<Rang>_name%` | Spielername auf diesem Rang |
@@ -120,6 +122,12 @@ Zusätzlich gibt es die eindeutig benannte Variante:
 
 Hinweise:
 
+- **Platzhalter brauchen immer einen Unterstrich.** PlaceholderAPI erwartet
+  die Form `%präfix_parameter%` und reicht Text ohne Unterstrich (etwa
+  `%money%`) gar nicht erst an eine Erweiterung weiter – dort bleibt
+  `%money%` unverändert stehen. Für das eigene Guthaben deshalb
+  `%money_%` schreiben (Unterstrich mit leerem Parameter) oder die
+  Variante `%economysystem_money%` nutzen.
 - Beträge werden mit dem konfigurierten `currency.format` ausgegeben;
   `_raw` liefert den reinen `BigDecimal`-String.
 - Die Top-Liste umfasst 50 Plätze und wird alle 60 Sekunden asynchron neu
@@ -135,6 +143,9 @@ Alle Dateien liegen in `plugins/EconomySystem/`.
 ### `settings.yml` (Auszug)
 
 ```yaml
+tests:
+  enabled: false                 # Test-Befehle (nur auf Testservern!)
+
 currency:
   name: "Coins"
   symbol: "$"
@@ -176,6 +187,30 @@ y = a · √x
 Der Zyklus verarbeitet alle gespeicherten Konten – auch von Spielern, die
 gerade offline sind. Läuft der Server zur konfigurierten Startzeit nicht,
 wird der Lauf nicht nachgeholt.
+
+### Zinszyklen simulieren (Tests)
+
+Zum Prüfen der Zinsformel kann der Zyklus sofort mehrfach ausgeführt werden:
+
+```yaml
+tests:
+  enabled: true    # Standard: false
+```
+
+```
+/economysystem-admin tests zins-zyklus add <Anzahl>
+```
+
+- Führt den Zinszyklus sofort `<Anzahl>`-mal aus (1 – 1000) und simuliert
+  damit vergangene Zyklen.
+- Jeder Lauf baut auf dem Guthaben des vorherigen auf, das Wachstum
+  entspricht also mehreren echten Zyklen.
+- Verwendet immer den aktuellen Sparzins-Faktor, auch wenn der automatische
+  Zyklus (`interest.enabled`) deaktiviert ist.
+- **Verändert echte Kontostände.** Nur auf Test-/Entwicklungsservern
+  aktivieren; zusätzlich ist die Permission `economysystem.tests` nötig.
+- Ist `tests.enabled` auf `false`, antwortet der Befehl nur mit einem
+  Hinweis und ändert nichts.
 
 Weitere Dateien:
 

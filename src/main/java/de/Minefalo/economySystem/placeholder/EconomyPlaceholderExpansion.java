@@ -15,7 +15,7 @@ import java.util.Locale;
  * Schreibweisen als auch ein eindeutig benannter Präfix funktionieren:</p>
  *
  * <ul>
- *   <li>{@code %money%}, {@code %money_<player>%}</li>
+ *   <li>{@code %money_%} (eigenes Guthaben), {@code %money_<player>%}</li>
  *   <li>{@code %eco_top_<rank>%} (optional {@code _name}, {@code _raw})</li>
  *   <li>{@code %aktuelle_sparzinsen%} (optional {@code _<player>})</li>
  *   <li>{@code %economysystem_...%} als vollständige Variante</li>

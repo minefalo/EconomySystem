@@ -38,6 +38,7 @@ public final class Settings {
     private String yamlFolder;
     private Mysql mysql;
     private Interest interest;
+    private boolean testsEnabled;
 
     public Settings(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -95,6 +96,8 @@ public final class Settings {
         );
 
         this.interest = readInterest();
+
+        this.testsEnabled = booleanValue("tests.enabled", false);
     }
 
     private Interest readInterest() {
@@ -278,6 +281,14 @@ public final class Settings {
 
     public Interest interest() {
         return interest;
+    }
+
+    /**
+     * Ob die Test-Befehle unter {@code /economysystem-admin tests}
+     * freigeschaltet sind ({@code tests.enabled}).
+     */
+    public boolean testsEnabled() {
+        return testsEnabled;
     }
 
     public record Mysql(String host,

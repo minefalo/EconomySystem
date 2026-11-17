@@ -24,11 +24,11 @@ commands:
     description: Überweist Geld an einen anderen Spieler.
     usage: /pay <Spieler> <Betrag>
   economysystem:
-    description: Hauptbefehl für Hilfe, Informationen und Reload.
-    usage: /economysystem <help|info|reload>
+    description: Hauptbefehl für die Hilfe.
+    usage: /economysystem <help>
   economysystem-admin:
-    description: Admin-Befehl für Geldverwaltung und Zinsen.
-    usage: /economysystem-admin <help|money|zinsen>
+    description: Admin-Befehl für Geldverwaltung, Zinsen, Informationen, Reload und Tests.
+    usage: /economysystem-admin <help|info|reload|money|zinsen|tests>
 
 permissions:
   economysystem.balance:
@@ -41,8 +41,11 @@ permissions:
     description: Erlaubt das Überweisen von Geld an andere Spieler.
     default: true
   economysystem.admin:
-    description: Erlaubt die Geldverwaltung und das Setzen der Zinsfaktoren.
+    description: Erlaubt die Admin-Befehle (Geldverwaltung, Zinsen, Info).
     default: op
   economysystem.reload:
-    description: Erlaubt das Neuladen der Konfiguration.
+    description: Erlaubt zusätzlich zu economysystem.admin das Neuladen über /economysystem-admin reload.
+    default: op
+  economysystem.tests:
+    description: Erlaubt zusätzlich zu economysystem.admin die Test-Befehle (nur wenn tests.enabled in der settings.yml aktiv ist).
     default: op
