@@ -83,8 +83,10 @@ public final class EconomySystemAdminCommand extends AbstractEconomyCommand {
                 "decimals", String.valueOf(currency.decimals()),
                 "starting-balance", currency.format(currency.startingBalance()),
                 "max-balance", maxBalance == null ? messages.raw("unlimited") : currency.format(maxBalance),
+                "min-balance", currency.format(currency.minBalance()),
                 "save-interval", saveInterval <= 0 ? messages.raw("disabled") : saveInterval + "s",
                 "accounts", String.valueOf(economy.cachedAccountCount()),
+                "credits", plugin.settings().credits().enabled() ? messages.raw("enabled") : messages.raw("disabled"),
                 "interest-savings", interest.savingsFactor().stripTrailingZeros().toPlainString(),
                 "interest-credit", interest.creditFactor().stripTrailingZeros().toPlainString(),
                 "interest-cycle", cycle);

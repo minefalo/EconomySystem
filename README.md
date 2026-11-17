@@ -14,11 +14,15 @@ MySQL-Speicher, konfigurierbarem Zinszyklus und Admin-Befehlen.
   Spieler (berechtigungsabhängig).
 - **Admin-Befehle** – Geld hinzufügen, abziehen, setzen oder auf das
   Startguthaben zurücksetzen.
+- **Kreditsystem** – Kredite bis zum 3-fachen Eigenkapital, frei wählbare
+  Laufzeit, Zinsen nach `y = x · m + a` und automatische Tilgung bei
+  Fälligkeit.
 - **Zinszyklus** – nach der Blockcraft-Wirtschaftsformel `y = a · √x` für
   **alle gespeicherten Konten**, auch offline. Zeitpunkt und Intervall sind
   konfigurierbar (Standard: täglich um 00:01 Uhr).
-- **Zwei Speicherarten** – YAML (`accounts/<uuid>.yml`) oder MySQL
-  (`DECIMAL(30,8)`, Tabelle wird automatisch angelegt).
+- **Zwei Speicherarten** – YAML (`accounts/<uuid>.yml`, Kredite in
+  `loans.yml`) oder MySQL (`DECIMAL(30,8)`, Tabellen werden automatisch
+  angelegt).
 - **Konfiguration mit Kommentaren** – Änderungen an Zinsfaktoren werden
   zeilenweise geschrieben, bestehende Kommentare bleiben erhalten.
 - **Mehrseitige Hilfe** – `/economysystem-admin help` liest `help.yml` und
@@ -57,6 +61,9 @@ MySQL-Speicher, konfigurierbarem Zinszyklus und Admin-Befehlen.
 | --- | --- |
 | `/money [Spieler]` | Zeigt das eigene oder ein fremdes Guthaben. |
 | `/pay <Spieler> <Betrag>` | Überweist Geld an einen anderen Spieler. |
+| `/kredit add <Betrag> <Tage>` | Nimmt einen Kredit auf. |
+| `/kredit bezahlen [Betrag]` | Zahlt offene Kredite zurück (ohne Betrag: so viel wie möglich). |
+| `/kredit info` | Zeigt Guthaben, Kreditrahmen und laufende Kredite. |
 | `/economysystem help` | Zeigt die allgemeine Hilfe. |
 | `/economysystem-admin help [Seite]` | Zeigt die mehrseitige Admin-Hilfe. |
 | `/economysystem-admin info` | Zeigt Speicher, Währung, Zinsen und Zyklus. |
@@ -80,6 +87,7 @@ Die Aliase stehen in `commands.yml` und können dort erweitert werden:
 | --- | --- |
 | `money` | `geld`, `balance`, `coins` |
 | `pay` | `zahlen`, `ueberweisen` |
+| `kredit` | `credit`, `darlehen` |
 | `economysystem` | `es`, `ecoadmin` |
 | `economysystem-admin` | `esa`, `ecoadm` |
 
@@ -90,6 +98,7 @@ Die Aliase stehen in `commands.yml` und können dort erweitert werden:
 | `economysystem.balance` | alle | Eigenes Guthaben anzeigen. |
 | `economysystem.balance.others` | OP | Guthaben anderer Spieler anzeigen. |
 | `economysystem.pay` | alle | Geld überweisen. |
+| `economysystem.kredit` | alle | Kreditsystem nutzen (`/kredit`). |
 | `economysystem.admin` | OP | Admin-Befehle: Geldverwaltung, Zinsen, Info. |
 | `economysystem.reload` | OP | Zusätzlich zu `economysystem.admin` das Neuladen über `/economysystem-admin reload`. |
 | `economysystem.tests` | OP | Zusätzlich zu `economysystem.admin` die Test-Befehle (nur mit `tests.enabled`). |
@@ -156,6 +165,7 @@ currency:
   rounding: HALF_UP
   starting-balance: "100.00"
   max-balance: "1000000000.00"   # "-1" = unbegrenzt
+  min-balance: "-1000.00"        # Untergrenze bei Zwangsabbuchungen
 
 interest:
   enabled: true
@@ -163,7 +173,17 @@ interest:
   interval-minutes: 1440         # 1440 = täglich
   factors:
     spar: "1.3"                  # Sparzins
-    kredit: "1.3"                # Kreditzins für neue Kredite
+    kredit: "1.3"                # a der Kreditformel
+
+credits:
+  enabled: true
+  max-loans: 3                   # gleichzeitige Kredite pro Spieler
+  limit-multiplier: "3.0"        # Kreditrahmen = 3 × Eigenkapital
+  slope: "0.5"                   # m in y = x*m + a
+  minimum-amount: "10.00"
+  min-days: 1
+  max-days: 365
+  check-interval-seconds: 60     # Prüfung fälliger Kredite
 
 storage:
   type: YAML                     # YAML oder MYSQL
@@ -181,8 +201,8 @@ y = a · √x
 - Beispiel: `x = 100.00`, `a = 1.3` → `y = 13.00`.
 - Das Ergebnis wird auf das maximale Guthaben begrenzt.
 - Der **Sparzins** wird am Ende jedes Zyklus allen Konten gutgeschrieben.
-- Der **Kreditzins** wird gespeichert und gilt für neue Kredite; bestehende
-  Konten werden im Zyklus nicht belastet.
+- Der **Kreditzins** (`a` in `y = x · m + a`) gilt für neu aufgenommene
+  Kredite; bestehende Konten werden im Zyklus nicht belastet.
 
 Der Zyklus verarbeitet alle gespeicherten Konten – auch von Spielern, die
 gerade offline sind. Läuft der Server zur konfigurierten Startzeit nicht,
@@ -212,11 +232,57 @@ tests:
 - Ist `tests.enabled` auf `false`, antwortet der Befehl nur mit einem
   Hinweis und ändert nichts.
 
+### Kreditsystem
+
+Spieler können sich mit `/kredit add <Betrag> <Tage>` Geld leihen. Alle
+Regeln stehen in der `settings.yml` unter `credits:`.
+
+**Kreditrahmen**
+
+```
+verfügbar = limit-multiplier × (Guthaben − alle offenen Kredite)
+```
+
+- Standard: das 3-fache des Eigenkapitals (`limit-multiplier: "3.0"`).
+- Ist das Eigenkapital negativ, wird kein Kredit vergeben.
+- Maximal `max-loans` gleichzeitige Kredite (Standard: 3).
+- Die Auszahlung darf das `max-balance` nicht überschreiten.
+
+**Zinsen**
+
+```
+y = x · m + a
+```
+
+- `x` = Laufzeit in Tagen (natürliche Zahl zwischen `min-days` und `max-days`).
+- `a` = `interest.factors.kredit` (Standard: `1.3`).
+- `m` = `credits.slope` (Standard: `0.5`).
+- `y` ist der **absolute Zinsbetrag**, der zusätzlich zum Kredit zurückgezahlt
+  wird. Rückzahlung insgesamt: `Kredit + y`.
+- Beispiel: `1.000` für `30` Tage → `y = 30 · 0.5 + 1.3 = 16.30`,
+  Rückzahlung `1.016,30`.
+
+**Rückzahlung und Fälligkeit**
+
+- `/kredit bezahlen [Betrag]` zahlt manuell zurück (ältester Kredit zuerst);
+  ohne Betrag so viel wie das Guthaben hergibt.
+- Am Fälligkeitstag bucht das System automatisch ab – auch ins Negative,
+  jedoch nie unter `currency.min-balance` (Standard: `-1000.00`).
+- Wird dabei die Untergrenze erreicht und bleibt etwas offen, werden die
+  restlichen **Zinsen erlassen**; der offene Kreditbetrag bleibt bestehen.
+- Ab dann gehen **alle Einnahmen** (z. B. `/pay`-Zahlungen oder
+  Admin-Gutschriften) automatisch in die Tilgung, bis der Kredit bezahlt ist.
+- Fällige Kredite werden alle `check-interval-seconds` Sekunden geprüft.
+
+Kredite werden persistent gespeichert – im YAML-Modus in `loans.yml`, im
+MySQL-Modus in der Tabelle `<table-prefix>loans`.
+
 Weitere Dateien:
 
 - `messages.yml` – alle Nachrichten, Farben (`&`-Codes und `&#RRGGBB`).
 - `help.yml` – Seiten der Admin-Hilfe inklusive klickbarer Navigation.
 - `commands.yml` – Aliase für alle Befehle.
+- `loans.yml` – gespeicherte Kredite (nur im YAML-Modus).
 
 ## Projektstruktur
 
@@ -224,6 +290,7 @@ Weitere Dateien:
 src/main/java/de/Minefalo/economySystem/
 ├── command/      Befehle und Alias-Registrierung
 ├── config/       settings.yml, messages.yml, commands.yml, help.yml
+├── credit/       Kredite, Zinsformel und automatische Tilgung
 ├── currency/     BigDecimal-Währung (Parsen, Formatieren, Runden)
 ├── economy/      Konten, Service, Zinsberechnung und -scheduler
 ├── help/         Mehrseitige Hilfe

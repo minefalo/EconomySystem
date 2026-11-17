@@ -39,6 +39,7 @@ public final class Settings {
     private Mysql mysql;
     private Interest interest;
     private boolean testsEnabled;
+    private Credits credits;
 
     public Settings(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -72,9 +73,10 @@ public final class Settings {
         RoundingMode rounding = parseRounding(config.getString("currency.rounding", "HALF_UP"));
         BigDecimal startingBalance = decimal("currency.starting-balance", "100.00");
         BigDecimal maxBalance = decimal("currency.max-balance", "-1");
+        BigDecimal minBalance = decimal("currency.min-balance", "-1000.00");
 
         this.currency = new Currency(name, symbol, format, numberFormat, locale, decimals,
-                rounding, startingBalance, maxBalance);
+                rounding, startingBalance, maxBalance, minBalance);
 
         String rawType = config.getString("storage.type", "YAML");
         this.storageType = parseStorageType(rawType);
@@ -98,6 +100,26 @@ public final class Settings {
         this.interest = readInterest();
 
         this.testsEnabled = booleanValue("tests.enabled", false);
+
+        this.credits = readCredits();
+    }
+
+    private Credits readCredits() {
+        boolean enabled = booleanValue("credits.enabled", true);
+        int maxLoans = clamp(intValue("credits.max-loans", 3), 1, 100);
+        BigDecimal limitMultiplier = positiveDecimal("credits.limit-multiplier", "3.0");
+        BigDecimal slope = nonNegativeDecimal("credits.slope", "0.5");
+        BigDecimal minAmount = nonNegativeDecimal("credits.minimum-amount", "10.00");
+        int minDays = clamp(intValue("credits.min-days", 1), 1, 3650);
+        int maxDays = clamp(intValue("credits.max-days", 365), 1, 3650);
+        if (maxDays < minDays) {
+            plugin.getLogger().warning("credits.max-days ist kleiner als credits.min-days - verwende "
+                    + minDays + ".");
+            maxDays = minDays;
+        }
+        int checkInterval = clamp(intValue("credits.check-interval-seconds", 60), 5, 3600);
+        return new Credits(enabled, maxLoans, limitMultiplier, slope, minAmount,
+                minDays, maxDays, checkInterval);
     }
 
     private Interest readInterest() {
@@ -209,6 +231,21 @@ public final class Settings {
         return new BigDecimal(fallback);
     }
 
+    private BigDecimal nonNegativeDecimal(String path, String fallback) {
+        Object raw = config.get(path);
+        String text = raw == null ? fallback : raw.toString().trim();
+        try {
+            BigDecimal value = new BigDecimal(text);
+            if (value.signum() >= 0) {
+                return value;
+            }
+            plugin.getLogger().warning("Wert für " + path + " darf nicht negativ sein - verwende " + fallback + ".");
+        } catch (NumberFormatException exception) {
+            plugin.getLogger().warning("Ungültiger Wert für " + path + ": '" + text + "' - verwende " + fallback + ".");
+        }
+        return new BigDecimal(fallback);
+    }
+
     private int intValue(String path, int fallback) {
         Object raw = config.get(path);
         if (raw instanceof Number number) {
@@ -289,6 +326,45 @@ public final class Settings {
      */
     public boolean testsEnabled() {
         return testsEnabled;
+    }
+
+    /**
+     * Einstellungen des Kreditsystems.
+     */
+    public Credits credits() {
+        return credits;
+    }
+
+    /**
+     * Einstellungen des Kreditsystems.
+     *
+     * @param enabled              ob Spieler Kredite aufnehmen können
+     * @param maxLoans             maximale Anzahl gleichzeitiger Kredite pro Spieler
+     * @param limitMultiplier      Kreditrahmen = Multiplikator * (Guthaben - offene Kredite)
+     * @param slope                m in {@code y = x * m + a} (Zinsen pro Tag)
+     * @param minimumAmount        Mindestbetrag eines Kredits
+     * @param minDays              minimale Laufzeit in Tagen
+     * @param maxDays              maximale Laufzeit in Tagen
+     * @param checkIntervalSeconds Intervall, in dem fällige Kredite geprüft werden
+     */
+    public record Credits(boolean enabled,
+                          int maxLoans,
+                          BigDecimal limitMultiplier,
+                          BigDecimal slope,
+                          BigDecimal minimumAmount,
+                          int minDays,
+                          int maxDays,
+                          int checkIntervalSeconds) {
+
+        /**
+         * Zinsen für eine Laufzeit nach {@code y = x * m + a}.
+         *
+         * @param days          Laufzeit in Tagen (x)
+         * @param creditFactor  Kreditzins (a)
+         */
+        public BigDecimal interestFor(int days, BigDecimal creditFactor) {
+            return slope.multiply(BigDecimal.valueOf(days)).add(creditFactor);
+        }
     }
 
     public record Mysql(String host,

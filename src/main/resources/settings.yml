@@ -39,6 +39,10 @@ currency:
   # Maximales Guthaben ("-1" = unbegrenzt)
   max-balance: "1000000000.00"
 
+  # Minimales Guthaben für erzwungene Abbuchungen (z. B. fällige Kredite).
+  # "0" = kein Überziehen, negative Werte erlauben einen Dispo bis hierhin.
+  min-balance: "-1000.00"
+
 interest:
   # Zinszyklus automatisch ausführen
   enabled: true
@@ -54,8 +58,34 @@ interest:
   factors:
     # Sparzins - wird am Zyklusende allen Konten gutgeschrieben
     spar: "1.3"
-    # Kreditzins - gilt ab der Änderung für neue Kredite
+    # Kreditzins - a in der Kreditformel y = x * m + a
     kredit: "1.3"
+
+credits:
+  # Kreditsystem aktivieren (/kredit)
+  enabled: true
+
+  # Maximale Anzahl gleichzeitiger Kredite pro Spieler
+  max-loans: 3
+
+  # Kreditrahmen = multiplier * (Guthaben - offene Kredite)
+  # Ist das Guthaben nach Abzug der Kredite negativ, wird kein Kredit vergeben.
+  limit-multiplier: "3.0"
+
+  # Steigung m der Zinsformel y = x * m + a
+  # x = Laufzeit in Tagen, a = interest.factors.kredit
+  # y ist der absolute Zinsbetrag, der zusätzlich zurückgezahlt wird.
+  slope: "0.5"
+
+  # Mindestbetrag eines Kredits
+  minimum-amount: "10.00"
+
+  # Laufzeit in Tagen (natürliche Zahlen)
+  min-days: 1
+  max-days: 365
+
+  # Intervall in Sekunden, in dem fällige Kredite geprüft werden
+  check-interval-seconds: 60
 
 storage:
   # Speicherart: YAML oder MYSQL

@@ -23,6 +23,7 @@ public final class Currency {
     private final RoundingMode rounding;
     private final BigDecimal startingBalance;
     private final BigDecimal maxBalance;
+    private final BigDecimal minBalance;
 
     public Currency(String name,
                     String symbol,
@@ -32,7 +33,8 @@ public final class Currency {
                     int decimals,
                     RoundingMode rounding,
                     BigDecimal startingBalance,
-                    BigDecimal maxBalance) {
+                    BigDecimal maxBalance,
+                    BigDecimal minBalance) {
         this.name = Objects.requireNonNullElse(name, "Coins");
         this.symbol = Objects.requireNonNullElse(symbol, "$");
         this.displayFormat = Objects.requireNonNullElse(displayFormat, "%symbol%%amount%");
@@ -54,6 +56,12 @@ public final class Currency {
             normalizedStart = this.maxBalance;
         }
         this.startingBalance = normalizedStart;
+
+        // Untergrenze für Zwangsabbuchungen (z. B. fällige Kredite). 0 bedeutet
+        // "kein Überziehen", negative Werte erlauben einen Dispo bis hierhin.
+        this.minBalance = minBalance == null || minBalance.signum() > 0
+                ? BigDecimal.ZERO.setScale(this.decimals, this.rounding)
+                : normalize(minBalance);
     }
 
     /**
@@ -203,5 +211,13 @@ public final class Currency {
      */
     public BigDecimal maxBalance() {
         return maxBalance;
+    }
+
+    /**
+     * Untergrenze des Guthabens bei erzwungenen Abbuchungen (z. B. wenn ein
+     * Kredit fällig wird). {@code 0} bedeutet, dass nicht überzogen werden darf.
+     */
+    public BigDecimal minBalance() {
+        return minBalance;
     }
 }

@@ -67,7 +67,7 @@ pages:
       - "&8  » &7Setzt den Sparzins (Standard: 1.3)."
       - "&8  » &7Wird am Ende des nächsten Zinszyklus gutgeschrieben."
       - "&e/economysystem-admin zinsen kredit set <Faktor>"
-      - "&8  » &7Setzt den Kreditzins für neue Kredite."
+      - "&8  » &7Setzt a in der Kreditformel y = x · m + a."
       - ""
       - "&7Der Zinszyklus läuft für &ealle gespeicherten Konten&7, auch offline."
       - "&7Zeitplan und Intervall stehen in der &esettings.yml&7."

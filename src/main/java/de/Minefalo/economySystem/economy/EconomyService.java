@@ -4,6 +4,7 @@ import de.Minefalo.economySystem.config.Settings;
 import de.Minefalo.economySystem.currency.Currency;
 import de.Minefalo.economySystem.storage.AccountData;
 import de.Minefalo.economySystem.storage.EconomyStorage;
+import de.Minefalo.economySystem.storage.LoanData;
 import de.Minefalo.economySystem.storage.StorageException;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
@@ -35,6 +36,7 @@ public final class EconomyService {
     private final EconomyStorage storage;
     private final Map<UUID, Account> accounts = new ConcurrentHashMap<>();
     private final ExecutorService executor;
+    private IncomeHandler incomeHandler;
 
     private BukkitTask autoSaveTask;
 
@@ -229,6 +231,22 @@ public final class EconomyService {
      * @return {@code false}, wenn das maximale Guthaben überschritten würde
      */
     public boolean deposit(Account account, BigDecimal amount) {
+        BigDecimal normalized = currency().normalize(amount);
+        if (!account.deposit(normalized, currency().maxBalance())) {
+            return false;
+        }
+        saveAsync(account);
+        notifyIncome(account, normalized);
+        return true;
+    }
+
+    /**
+     * Zahlt einen Betrag gut, ohne die Einnahmen-Aufteilung (z. B. für
+     * Kredite) auszulösen.
+     *
+     * @return {@code false}, wenn das maximale Guthaben überschritten würde
+     */
+    public boolean depositDirect(Account account, BigDecimal amount) {
         if (!account.deposit(currency().normalize(amount), currency().maxBalance())) {
             return false;
         }
@@ -274,6 +292,7 @@ public final class EconomyService {
 
         saveAsync(from);
         saveAsync(to);
+        notifyIncome(to, normalized);
         return true;
     }
 
@@ -462,6 +481,77 @@ public final class EconomyService {
         }
 
         return new InterestResult(balances.size(), credited, currency().normalize(totalCredited));
+    }
+
+    /**
+     * Registriert den Empfänger für Gutschriften (z. B. die Kredit-Tilgung).
+     */
+    public void setIncomeHandler(IncomeHandler handler) {
+        this.incomeHandler = handler;
+    }
+
+    private void notifyIncome(Account account, BigDecimal amount) {
+        IncomeHandler handler = incomeHandler;
+        if (handler == null || amount == null || amount.signum() <= 0) {
+            return;
+        }
+        try {
+            handler.onIncome(account, amount);
+        } catch (RuntimeException exception) {
+            plugin.getLogger().severe("Einnahmen konnten nicht mit Krediten verrechnet werden: "
+                    + exception.getMessage());
+        }
+    }
+
+    /**
+     * Speichert einen Kredit asynchron.
+     */
+    public void saveLoanAsync(LoanData loan) {
+        if (executor.isShutdown()) {
+            return;
+        }
+        try {
+            executor.execute(() -> {
+                try {
+                    storage.saveLoan(loan);
+                } catch (StorageException exception) {
+                    plugin.getLogger().severe("Kredit " + loan.id()
+                            + " konnte nicht gespeichert werden: " + exception.getMessage());
+                }
+            });
+        } catch (RuntimeException exception) {
+            plugin.getLogger().severe("Kredit " + loan.id()
+                    + " konnte nicht gespeichert werden: " + exception.getMessage());
+        }
+    }
+
+    /**
+     * Entfernt einen vollständig zurückgezahlten Kredit asynchron.
+     */
+    public void deleteLoanAsync(UUID id) {
+        if (executor.isShutdown()) {
+            return;
+        }
+        try {
+            executor.execute(() -> {
+                try {
+                    storage.deleteLoan(id);
+                } catch (StorageException exception) {
+                    plugin.getLogger().severe("Kredit " + id
+                            + " konnte nicht entfernt werden: " + exception.getMessage());
+                }
+            });
+        } catch (RuntimeException exception) {
+            plugin.getLogger().severe("Kredit " + id
+                    + " konnte nicht entfernt werden: " + exception.getMessage());
+        }
+    }
+
+    /**
+     * Empfänger für Gutschriften auf einem Konto.
+     */
+    public interface IncomeHandler {
+        void onIncome(Account account, BigDecimal amount);
     }
 
     private void scheduleAutoSave() {

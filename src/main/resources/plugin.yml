@@ -23,6 +23,9 @@ commands:
   pay:
     description: Überweist Geld an einen anderen Spieler.
     usage: /pay <Spieler> <Betrag>
+  kredit:
+    description: Nimmt einen Kredit auf, zahlt ihn zurück oder zeigt ihn an.
+    usage: /kredit <add <Betrag> <Tage>|bezahlen [Betrag]|info>
   economysystem:
     description: Hauptbefehl für die Hilfe.
     usage: /economysystem <help>
@@ -39,6 +42,9 @@ permissions:
     default: op
   economysystem.pay:
     description: Erlaubt das Überweisen von Geld an andere Spieler.
+    default: true
+  economysystem.kredit:
+    description: Erlaubt die Nutzung des Kreditsystems (/kredit).
     default: true
   economysystem.admin:
     description: Erlaubt die Admin-Befehle (Geldverwaltung, Zinsen, Info).

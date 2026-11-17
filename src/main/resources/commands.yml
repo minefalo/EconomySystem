@@ -2,7 +2,7 @@
 #  EconomySystem - Befehle und Aliase
 # ==========================================================
 # Hier können für alle Befehle zusätzliche Aliase registriert werden.
-# Die eigentlichen Befehlsnamen (money, pay, economysystem,
+# Die eigentlichen Befehlsnamen (money, pay, kredit, economysystem,
 # economysystem-admin) stehen in der plugin.yml und bleiben immer erhalten.
 #
 # Regeln für Aliase:
@@ -22,6 +22,11 @@ commands:
     aliases:
       - zahlen
       - ueberweisen
+
+  kredit:
+    aliases:
+      - credit
+      - darlehen
 
   economysystem:
     aliases:

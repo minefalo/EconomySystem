@@ -33,6 +33,27 @@ public interface EconomyStorage {
     void saveAll(Collection<AccountData> accounts);
 
     /**
+     * Lädt alle gespeicherten Kredite.
+     */
+    default List<LoanData> loadLoans() {
+        return List.of();
+    }
+
+    /**
+     * Speichert einen Kredit (neu oder aktualisiert).
+     */
+    default void saveLoan(LoanData loan) {
+        throw new UnsupportedOperationException("Kredite werden von diesem Speicher nicht unterstützt.");
+    }
+
+    /**
+     * Entfernt einen vollständig zurückgezahlten Kredit.
+     */
+    default void deleteLoan(UUID id) {
+        throw new UnsupportedOperationException("Kredite werden von diesem Speicher nicht unterstützt.");
+    }
+
+    /**
      * @return Anzeigename des Speichers (z. B. "YAML" oder "MySQL")
      */
     String name();

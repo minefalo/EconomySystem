@@ -27,7 +27,9 @@ public final class MySqlStorage implements EconomyStorage {
     private final JavaPlugin plugin;
     private final Settings.Mysql config;
     private final String table;
+    private final String loanTable;
     private final String upsertSql;
+    private final String loanUpsertSql;
     private final Object lock = new Object();
 
     private Connection connection;
@@ -46,6 +48,14 @@ public final class MySqlStorage implements EconomyStorage {
         this.upsertSql = "INSERT INTO `" + table + "` (`uuid`, `name`, `balance`, `updated_at`) "
                 + "VALUES (?, ?, ?, ?) "
                 + "ON DUPLICATE KEY UPDATE `name` = ?, `balance` = ?, `updated_at` = ?";
+
+        this.loanTable = prefix + "loans";
+        this.loanUpsertSql = "INSERT INTO `" + loanTable + "` (`id`, `owner`, `owner_name`, `principal`, "
+                + "`interest`, `principal_remaining`, `interest_remaining`, `days`, `created_at`, `due_at`, "
+                + "`auto_collect`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                + "ON DUPLICATE KEY UPDATE `owner_name` = ?, `principal` = ?, `interest` = ?, "
+                + "`principal_remaining` = ?, `interest_remaining` = ?, `days` = ?, `due_at` = ?, "
+                + "`auto_collect` = ?";
     }
 
     @Override
@@ -105,6 +115,26 @@ public final class MySqlStorage implements EconomyStorage {
                 + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
         try (Statement statement = current.createStatement()) {
             statement.execute(sql);
+        }
+
+        String loans = "CREATE TABLE IF NOT EXISTS `" + loanTable + "` ("
+                + "`id` CHAR(36) NOT NULL,"
+                + "`owner` CHAR(36) NOT NULL,"
+                + "`owner_name` VARCHAR(64) NOT NULL,"
+                + "`principal` DECIMAL(30,8) NOT NULL,"
+                + "`interest` DECIMAL(30,8) NOT NULL,"
+                + "`principal_remaining` DECIMAL(30,8) NOT NULL,"
+                + "`interest_remaining` DECIMAL(30,8) NOT NULL,"
+                + "`days` INT NOT NULL,"
+                + "`created_at` BIGINT NOT NULL,"
+                + "`due_at` BIGINT NOT NULL,"
+                + "`auto_collect` TINYINT(1) NOT NULL DEFAULT 0,"
+                + "PRIMARY KEY (`id`),"
+                + "KEY `idx_owner` (`owner`),"
+                + "KEY `idx_due` (`due_at`)"
+                + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+        try (Statement statement = current.createStatement()) {
+            statement.execute(loans);
         }
     }
 
@@ -248,6 +278,79 @@ public final class MySqlStorage implements EconomyStorage {
         statement.setString(5, account.name());
         statement.setBigDecimal(6, account.balance());
         statement.setLong(7, now);
+    }
+
+    @Override
+    public List<LoanData> loadLoans() {
+        String sql = "SELECT `id`, `owner`, `owner_name`, `principal`, `interest`, `principal_remaining`, "
+                + "`interest_remaining`, `days`, `created_at`, `due_at`, `auto_collect` FROM `"
+                + loanTable + "`";
+        List<LoanData> result = new ArrayList<>();
+        synchronized (lock) {
+            try (PreparedStatement statement = connection().prepareStatement(sql);
+                 ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    result.add(new LoanData(
+                            UUID.fromString(rows.getString("id")),
+                            UUID.fromString(rows.getString("owner")),
+                            rows.getString("owner_name"),
+                            rows.getBigDecimal("principal"),
+                            rows.getBigDecimal("interest"),
+                            rows.getBigDecimal("principal_remaining"),
+                            rows.getBigDecimal("interest_remaining"),
+                            rows.getInt("days"),
+                            rows.getLong("created_at"),
+                            rows.getLong("due_at"),
+                            rows.getBoolean("auto_collect")));
+                }
+            } catch (SQLException exception) {
+                throw fail("laden", exception);
+            }
+        }
+        return result;
+    }
+
+    @Override
+    public void saveLoan(LoanData loan) {
+        synchronized (lock) {
+            try (PreparedStatement statement = connection().prepareStatement(loanUpsertSql)) {
+                statement.setString(1, loan.id().toString());
+                statement.setString(2, loan.owner().toString());
+                statement.setString(3, loan.ownerName());
+                statement.setBigDecimal(4, loan.principal());
+                statement.setBigDecimal(5, loan.interest());
+                statement.setBigDecimal(6, loan.principalRemaining());
+                statement.setBigDecimal(7, loan.interestRemaining());
+                statement.setInt(8, loan.days());
+                statement.setLong(9, loan.createdAt());
+                statement.setLong(10, loan.dueAt());
+                statement.setBoolean(11, loan.autoCollect());
+                statement.setString(12, loan.ownerName());
+                statement.setBigDecimal(13, loan.principal());
+                statement.setBigDecimal(14, loan.interest());
+                statement.setBigDecimal(15, loan.principalRemaining());
+                statement.setBigDecimal(16, loan.interestRemaining());
+                statement.setInt(17, loan.days());
+                statement.setLong(18, loan.dueAt());
+                statement.setBoolean(19, loan.autoCollect());
+                statement.executeUpdate();
+            } catch (SQLException exception) {
+                throw fail("speichern", exception);
+            }
+        }
+    }
+
+    @Override
+    public void deleteLoan(UUID id) {
+        String sql = "DELETE FROM `" + loanTable + "` WHERE `id` = ?";
+        synchronized (lock) {
+            try (PreparedStatement statement = connection().prepareStatement(sql)) {
+                statement.setString(1, id.toString());
+                statement.executeUpdate();
+            } catch (SQLException exception) {
+                throw fail("löschen", exception);
+            }
+        }
     }
 
     private StorageException fail(String action, SQLException exception) {
