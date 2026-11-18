@@ -39,6 +39,7 @@ commands:
     aliases:
       - esa
       - ecoadm
+      - ecoadmin
 
   economysystem-gui:
     aliases:
