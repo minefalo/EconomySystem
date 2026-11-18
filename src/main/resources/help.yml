@@ -104,5 +104,5 @@ pages:
       - "&8  » &7Jeder Lauf baut auf dem Guthaben des vorherigen auf,"
       - "&8  » &7simuliert also vergangene Zyklen (1 - 1000)."
       - ""
-      - "&7Es wird immer der aktuelle &eSparzins-Faktor &7verwendet,"
-      - "&7auch wenn der automatische Zinszyklus deaktiviert ist."
+      - "&7Es wird immer der aktuelle &eSparzins-Faktor &7verwendet."
+      - "&7Der automatische Zinszyklus muss dafür aktiviert sein."

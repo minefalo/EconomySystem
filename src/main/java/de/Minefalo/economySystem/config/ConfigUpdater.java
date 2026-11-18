@@ -11,6 +11,9 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Logger;
@@ -69,13 +72,24 @@ public final class ConfigUpdater {
         apply(bundled, current);
         current.set(VERSION_KEY, targetVersion);
 
+        Path temporary = null;
         try {
-            current.save(file);
-            tidy(file, targetVersion);
+            temporary = Files.createTempFile(file.toPath().toAbsolutePath().getParent(), file.getName(), ".tmp");
+            current.save(temporary.toFile());
+            tidy(temporary.toFile(), targetVersion);
+            replaceFile(temporary, file.toPath());
         } catch (IOException exception) {
             logger.warning(file.getName() + " konnte nicht aktualisiert werden: "
                     + exception.getMessage());
             return false;
+        } finally {
+            if (temporary != null) {
+                try {
+                    Files.deleteIfExists(temporary);
+                } catch (IOException exception) {
+                    logger.warning("Temporäre Konfiguration konnte nicht entfernt werden: " + exception.getMessage());
+                }
+            }
         }
 
         logger.info(file.getName() + " wurde auf config-version " + targetVersion
@@ -162,6 +176,14 @@ public final class ConfigUpdater {
         cleaned.addAll(insertAt, block);
 
         Files.write(file.toPath(), cleaned, StandardCharsets.UTF_8);
+    }
+
+    static void replaceFile(Path temporary, Path destination) throws IOException {
+        try {
+            Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException exception) {
+            Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING);
+        }
     }
 
     private static String stripTrailing(String line) {

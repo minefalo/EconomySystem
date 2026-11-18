@@ -7,7 +7,7 @@
 # automatisch vor die Nachricht gesetzt.
 # ==========================================================
 
-config-version: 2
+config-version: 4
 
 prefix: "&4&lBC &r&6EconomySystem&r&c » "
 
@@ -22,7 +22,16 @@ insufficient-funds-other: "&e%player% &chat nicht genug Geld. Guthaben: &e%balan
 
 balance-self: "&7Dein Guthaben: &6%balance%"
 balance-other: "&7Guthaben von &e%player%&7: &6%balance%"
+balance-on-join: "&7Dein Guthaben: &6%balance%"
 
+interest-credited: "&aZinsgutschrift: &6%amount% &aauf dein Konto."
+
+top-header: "&6&lTop-Guthaben &8(&7Seite %page%/%pages%&8)"
+top-entry: "&8#%rank% &e%player% &8» &6%balance%"
+top-empty: "&7Es sind noch keine Guthaben vorhanden."
+top-invalid-page: "&c„%input%“ ist keine gültige Seite."
+
+pay-recipient-offline: "&cDer Empfänger muss für eine sichere Überweisung online sein."
 pay-self: "&cDu kannst dir nicht selbst Geld überweisen."
 pay-sent: "&aDu hast &e%player% &6%amount% &agesendet. Neues Guthaben: &6%balance%"
 pay-received: "&aDu hast &6%amount% &avon &e%player% &aerhalten. Neues Guthaben: &6%balance%"
@@ -32,13 +41,15 @@ balance-set: "&aDas Guthaben von &e%player% &awurde auf &6%balance% &agesetzt."
 
 reload-success: "&aEinstellungen, Nachrichten, Menü, Hilfe und Befehle wurden neu geladen."
 
+tests-interest-disabled: "&cDie Zinsen sind deaktiviert; die Simulation wurde nicht gestartet."
 tests-disabled: "&cDie Test-Befehle sind deaktiviert. Setze in der settings.yml &etests.enabled: true&c und lade mit &e/economysystem-admin reload&c neu."
+tests-unavailable: "&cDieser Build enthält keine Test-Befehle. Verwende zum Testen einen Entwicklungs-Build (ohne das Maven-Profil &eproduction&c)."
 tests-cycles-invalid: "&cDie Anzahl muss eine ganze Zahl zwischen 1 und %max% sein."
 tests-started: "&7Simuliere &e%cycles% &7Zinszyklen mit dem Sparzins-Faktor &e%factor%&7 ..."
 tests-result: "&a%cycles% Zinszyklen simuliert: &e%credited% &avon &e%checked% &aKonten verzinst, insgesamt &6%total% &agutgeschrieben."
 tests-failed: "&cDie Simulation ist fehlgeschlagen: &e%error%"
 
-usage-money: "&cVerwendung: &e/money [Spieler]"
+usage-money: "&cVerwendung: &e/money [Spieler|top [Seite]]"
 usage-pay: "&cVerwendung: &e/pay <Spieler> <Betrag>"
 usage-kredit: "&cVerwendung: &e/kredit <add <Betrag> <Tage>|bezahlen [Betrag]|info>"
 usage-kredit-add: "&cVerwendung: &e/kredit add <Betrag> <Tage>"
@@ -129,6 +140,7 @@ help:
   - "&6&lGuthaben"
   - "&e/money &7- Zeigt dein Guthaben"
   - "&e/money <Spieler> &7- Zeigt das Guthaben eines Spielers"
+  - "&e/money top [Seite] &7- Zeigt die reichsten Spieler"
   - "&e/pay <Spieler> <Betrag> &7- Überweist Geld an einen Spieler"
   - "&e/kredit add <Betrag> <Tage> &7- Nimmt einen Kredit auf"
   - "&e/kredit bezahlen [Betrag] &7- Zahlt deinen Kredit zurück"

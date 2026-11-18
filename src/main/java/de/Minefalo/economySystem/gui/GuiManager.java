@@ -56,6 +56,7 @@ public final class GuiManager implements Listener {
     private final EconomySystem plugin;
     private final GuiConfig config;
     private final Map<UUID, GuiSession> sessions = new ConcurrentHashMap<>();
+    private final Map<ClickKey, Long> lastCommandClick = new ConcurrentHashMap<>();
     private final Map<UUID, AnvilTarget> anvils = new ConcurrentHashMap<>();
 
     /**
@@ -73,6 +74,13 @@ public final class GuiManager implements Listener {
     private record AnvilTarget(GuiSession session, AnvilMode mode) {
     }
 
+    /**
+     * Ein Klick wird pro Spieler und Slot gedrosselt. Dadurch blockiert ein
+     * Klick auf ein anderes Item nicht mehr den nächsten Klick.
+     */
+    private record ClickKey(UUID player, int slot) {
+    }
+
     public GuiManager(EconomySystem plugin) {
         this.plugin = plugin;
         this.config = new GuiConfig(plugin);
@@ -80,6 +88,7 @@ public final class GuiManager implements Listener {
 
     public void reload() {
         sessions.clear();
+        lastCommandClick.clear();
         closeInventories();
         anvils.clear();
         config.reload();
@@ -87,6 +96,7 @@ public final class GuiManager implements Listener {
 
     public void stop() {
         sessions.clear();
+        lastCommandClick.clear();
         closeInventories();
         anvils.clear();
     }
@@ -207,9 +217,20 @@ public final class GuiManager implements Listener {
             nextTick(() -> open(player, item.open()));
             return;
         }
-        if (item.commands().isEmpty()) {
+        if (item.commands().isEmpty() || holder.handled()) {
             return;
         }
+        long cooldown = config.clickCooldownMs();
+        if (cooldown > 0) {
+            long now = System.currentTimeMillis();
+            ClickKey key = new ClickKey(player.getUniqueId(), slot);
+            Long lastClick = lastCommandClick.get(key);
+            if (lastClick != null && now - lastClick < cooldown) {
+                return;
+            }
+            lastCommandClick.put(key, now);
+        }
+        holder.handled(true);
         if (!item.inputs().isEmpty()) {
             GuiSession session = new GuiSession(item.inputs(), item.commands(), menu.id());
             sessions.put(player.getUniqueId(), session);
@@ -220,6 +241,10 @@ public final class GuiManager implements Listener {
             player.closeInventory();
         }
         runCommands(player, item.commands());
+        if (!config.closeOnClick()) {
+            // Doppelklicks im selben Tick ausfiltern, das Menü bleibt bedienbar.
+            nextTick(() -> holder.handled(false));
+        }
     }
 
     // ------------------------------------------------------------
@@ -764,11 +789,14 @@ public final class GuiManager implements Listener {
         }
 
         if (event.getView().getTopInventory().getHolder() instanceof GuiHolder holder) {
-            // Klicks in unseren Menüs gehören dem Plugin, nicht dem Spieler.
-            event.setCancelled(true);
             if (!isTopInventoryClick(event)) {
+                // Shift-Klicks und Doppelklicks können Gegenstände ins Menü bewegen.
+                if (event.isShiftClick() || event.getClick() == org.bukkit.event.inventory.ClickType.DOUBLE_CLICK) {
+                    event.setCancelled(true);
+                }
                 return;
             }
+            event.setCancelled(true);
             switch (holder.kind()) {
                 case MENU -> clickMenu(player, holder, event.getSlot());
                 case SLIDER -> clickSlider(player, holder, event.getSlot());
@@ -781,11 +809,14 @@ public final class GuiManager implements Listener {
         if (target == null || !(event.getView() instanceof AnvilView view)) {
             return;
         }
-        // Im Amboss darf nichts entnommen oder abgelegt werden.
-        event.setCancelled(true);
         if (!isTopInventoryClick(event)) {
+            if (event.isShiftClick() || event.getClick() == org.bukkit.event.inventory.ClickType.DOUBLE_CLICK) {
+                event.setCancelled(true);
+            }
             return;
         }
+        // Im Amboss darf nichts entnommen oder abgelegt werden.
+        event.setCancelled(true);
         clickAnvil(player, target, view, event.getSlot());
     }
 
@@ -796,12 +827,9 @@ public final class GuiManager implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onDrag(InventoryDragEvent event) {
-        if (event.getView().getTopInventory().getHolder() instanceof GuiHolder) {
-            event.setCancelled(true);
-            return;
-        }
-        if (event.getWhoClicked() instanceof Player player
-                && anvils.containsKey(player.getUniqueId())) {
+        boolean ours = event.getView().getTopInventory().getHolder() instanceof GuiHolder
+                || event.getWhoClicked() instanceof Player player && anvils.containsKey(player.getUniqueId());
+        if (ours && event.getRawSlots().stream().anyMatch(slot -> slot < event.getView().getTopInventory().getSize())) {
             event.setCancelled(true);
         }
     }
@@ -848,6 +876,7 @@ public final class GuiManager implements Listener {
     public void onQuit(PlayerQuitEvent event) {
         sessions.remove(event.getPlayer().getUniqueId());
         anvils.remove(event.getPlayer().getUniqueId());
+        lastCommandClick.keySet().removeIf(key -> key.player().equals(event.getPlayer().getUniqueId()));
     }
 
     // ------------------------------------------------------------

@@ -81,7 +81,7 @@ public final class KreditCommand extends AbstractEconomyCommand {
                         "days", String.valueOf(loan.days()),
                         "interest", currency().format(loan.interest()),
                         "total", currency().format(loan.total()),
-                        "due", CreditService.formatDue(loan));
+                        "due", credit.formatDue(loan));
             }
             case DISABLED -> messages().send(sender, "credit-disabled");
             case TOO_MANY_LOANS -> messages().send(sender, "credit-too-many-loans",
@@ -162,7 +162,7 @@ public final class KreditCommand extends AbstractEconomyCommand {
                     "amount", currency().format(loan.principal()),
                     "remaining", currency().format(loan.remaining()),
                     "interest", currency().format(loan.interestRemaining()),
-                    "due", CreditService.formatDue(loan),
+                    "due", credit.formatDue(loan),
                     "status", messages().raw(loan.isOverdue(now)
                             ? "credit-status-overdue"
                             : loan.autoCollect() ? "credit-status-collecting" : "credit-status-running"));
@@ -198,15 +198,14 @@ public final class KreditCommand extends AbstractEconomyCommand {
         if (args.length == 2) {
             String subcommand = args[0].toLowerCase(Locale.ROOT);
             if (subcommand.equals("add")) {
-                return filter(List.of("100", "500", "1000"), args[1]);
+                return filter(plugin.settings().suggestions().creditAmounts(), args[1]);
             }
             if (subcommand.equals("bezahlen") || subcommand.equals("pay")) {
-                return filter(List.of("10", "50", "100"), args[1]);
+                return filter(plugin.settings().suggestions().repayAmounts(), args[1]);
             }
         }
         if (args.length == 3 && args[0].equalsIgnoreCase("add")) {
-            Settings.Credits config = plugin.settings().credits();
-            return filter(List.of(String.valueOf(config.minDays()), "7", "30", "90"), args[2]);
+            return filter(plugin.settings().suggestions().creditDays(), args[2]);
         }
         return List.of();
     }

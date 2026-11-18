@@ -13,6 +13,7 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -74,6 +75,9 @@ public final class EconomyService {
     public Account account(UUID uniqueId, String name) {
         Account account = accounts.get(uniqueId);
         if (account == null) {
+            if (Bukkit.isPrimaryThread()) {
+                throw new StorageException("Konto wird noch geladen. Bitte versuche es erneut.");
+            }
             account = accounts.computeIfAbsent(uniqueId, id -> loadAccount(id, name));
         }
         updateName(account, name);
@@ -103,31 +107,44 @@ public final class EconomyService {
         saveAsync(account);
     }
 
-    /**
-     * Sucht ein Konto anhand des Spielernamens (online oder gespeichert).
-     */
-    public Optional<Account> find(String name) {
+    /** Konten werden ausschließlich im Storage-Executor geladen. */
+    public CompletableFuture<Account> accountAsync(UUID uniqueId, String name) {
+        Account cached = accounts.get(uniqueId);
+        if (cached != null) {
+            updateName(cached, name);
+            return CompletableFuture.completedFuture(cached);
+        }
+        try {
+            return CompletableFuture.supplyAsync(() -> account(uniqueId, name), executor);
+        } catch (RuntimeException exception) {
+            return CompletableFuture.failedFuture(exception);
+        }
+    }
+
+    /** Bereitet eine Offline-Namenssuche vor, ohne den Server-Thread zu blockieren. */
+    public CompletableFuture<Optional<Account>> findAsync(String name) {
         Player online = Bukkit.getPlayerExact(name);
         if (online != null) {
-            return Optional.of(account(online.getUniqueId(), online.getName()));
+            return accountAsync(online.getUniqueId(), online.getName()).thenApply(Optional::of);
         }
-
-        Optional<Account> cached = accounts.values().stream()
-                .filter(account -> account.name().equalsIgnoreCase(name))
-                .findFirst();
-        if (cached.isPresent()) {
-            return cached;
+        try {
+            return CompletableFuture.supplyAsync(() -> {
+                Optional<Account> cached = accountByName(name);
+                if (cached.isPresent()) {
+                    return cached;
+                }
+                return storage.loadByName(name).map(data -> accounts.computeIfAbsent(data.uniqueId(),
+                        id -> new Account(id, data.name(), currency().normalize(data.balance()))));
+            }, executor);
+        } catch (RuntimeException exception) {
+            return CompletableFuture.failedFuture(exception);
         }
+    }
 
-        Optional<AccountData> stored = storage.loadByName(name);
-        if (stored.isEmpty()) {
-            return Optional.empty();
-        }
-
-        AccountData data = stored.get();
-        Account account = accounts.computeIfAbsent(data.uniqueId(),
-                id -> new Account(id, data.name(), currency().normalize(data.balance())));
-        return Optional.of(account);
+    /** Liefert nur bereits vorbereitete Konten, ohne Speicherzugriff. */
+    public Optional<Account> find(String name) {
+        Player online = Bukkit.getPlayerExact(name);
+        return online == null ? accountByName(name) : Optional.ofNullable(accounts.get(online.getUniqueId()));
     }
 
     /**
@@ -267,8 +284,11 @@ public final class EconomyService {
         if (!account.deposit(normalized, currency().maxBalance())) {
             return false;
         }
-        saveAsync(account);
+        // Erst die Tilgung anstoßen: Sie speichert Konto und Kredit gemeinsam.
+        // Würde das Konto vorher separat gespeichert, könnte ein Absturz
+        // zwischen beiden Schreibvorgängen die Tilgung verlieren.
         notifyIncome(account, normalized);
+        saveAsync(account);
         return true;
     }
 
@@ -284,6 +304,33 @@ public final class EconomyService {
         }
         saveAsync(account);
         return true;
+    }
+
+    /**
+     * Bucht einen Betrag gut, ohne selbst zu speichern. Der Aufrufer muss
+     * die Änderung anschließend gemeinsam mit einem Kredit über
+     * {@link #saveLoanTransaction(Account, Collection, Collection)} sichern.
+     *
+     * @return {@code false}, wenn das maximale Guthaben überschritten würde
+     */
+    public boolean depositUnsaved(Account account, BigDecimal amount) {
+        return account.deposit(currency().normalize(amount), currency().maxBalance());
+    }
+
+    /**
+     * Bucht einen Betrag ab, ohne selbst zu speichern.
+     *
+     * @return {@code false}, wenn das Guthaben nicht ausreicht
+     */
+    public boolean withdrawUnsaved(Account account, BigDecimal amount) {
+        return account.withdraw(currency().normalize(amount));
+    }
+
+    /**
+     * Setzt den Kontostand, ohne selbst zu speichern.
+     */
+    public void setBalanceUnsaved(Account account, BigDecimal amount) {
+        account.setBalance(currency().normalize(amount));
     }
 
     /**
@@ -322,9 +369,13 @@ public final class EconomyService {
             return false;
         }
 
-        saveAsync(from);
-        saveAsync(to);
+        // Erst die Tilgung anstoßen: Sie speichert Konto und Kredit gemeinsam.
+        // Danach werden beide Konten noch einmal gemeinsam geschrieben
+        // (MySQL: eine Transaktion, YAML: ein Journal).
         notifyIncome(to, normalized);
+        if (!executor.isShutdown()) {
+            executor.execute(() -> saveAll(List.of(from.snapshot(), to.snapshot())));
+        }
         return true;
     }
 
@@ -335,13 +386,10 @@ public final class EconomyService {
     public void preload(Player player) {
         UUID uniqueId = player.getUniqueId();
         String name = player.getName();
-        executor.execute(() -> {
-            try {
-                account(uniqueId, name);
-            } catch (StorageException exception) {
-                plugin.getLogger().warning("Konto von " + name + " konnte nicht geladen werden: "
-                        + exception.getMessage());
-            }
+        accountAsync(uniqueId, name).exceptionally(exception -> {
+            plugin.getLogger().warning("Konto von " + name + " konnte nicht geladen werden: "
+                    + exception.getMessage());
+            return null;
         });
     }
 
@@ -358,10 +406,8 @@ public final class EconomyService {
     }
 
     /**
-     * Speichert das Konto asynchron. Der Snapshot wird erst im Executor
-     * erstellt, damit später eingereihte Speichervorgänge immer den
-     * aktuellsten Stand schreiben und keine zwischenzeitlichen Änderungen
-     * überschreiben.
+     * Erst im Executor einen Snapshot erstellen, damit zwischenzeitliche
+     * Änderungen (insbesondere ein Zinszyklus) nicht überschrieben werden.
      */
     private void saveAsync(Account account) {
         if (executor.isShutdown()) {
@@ -386,14 +432,12 @@ public final class EconomyService {
         if (executor.isShutdown()) {
             return;
         }
-        executor.execute(this::saveDirty);
-    }
-
-    private void saveDirty() {
-        List<AccountData> dirty = dirtySnapshots();
-        if (!dirty.isEmpty()) {
-            saveAll(dirty);
-        }
+        executor.execute(() -> {
+            List<AccountData> dirty = dirtySnapshots();
+            if (!dirty.isEmpty()) {
+                saveAll(dirty);
+            }
+        });
     }
 
     private void saveAll(List<AccountData> dirty) {
@@ -471,6 +515,7 @@ public final class EconomyService {
 
         BigDecimal maxBalance = currency().maxBalance();
         List<AccountData> changed = new ArrayList<>();
+        Map<UUID, BigDecimal> creditsByAccount = new LinkedHashMap<>();
         BigDecimal totalCredited = BigDecimal.ZERO;
         int credited = 0;
 
@@ -484,6 +529,7 @@ public final class EconomyService {
                         continue;
                     }
                     changed.add(cached.snapshot());
+                    creditsByAccount.put(cached.uniqueId(), credit);
                     totalCredited = totalCredited.add(credit);
                     credited++;
                 }
@@ -498,6 +544,7 @@ public final class EconomyService {
             }
             changed.add(new AccountData(data.uniqueId(), data.name(),
                     currency().normalize(balance.add(credit))));
+            creditsByAccount.put(data.uniqueId(), credit);
             totalCredited = totalCredited.add(credit);
             credited++;
         }
@@ -512,7 +559,8 @@ public final class EconomyService {
             }
         }
 
-        return new InterestResult(balances.size(), credited, currency().normalize(totalCredited));
+        return new InterestResult(balances.size(), credited,
+                currency().normalize(totalCredited), creditsByAccount);
     }
 
     /**
@@ -531,6 +579,47 @@ public final class EconomyService {
             handler.onIncome(account, amount);
         } catch (RuntimeException exception) {
             plugin.getLogger().severe("Einnahmen konnten nicht mit Krediten verrechnet werden: "
+                    + exception.getMessage());
+        }
+    }
+
+    /**
+     * Speichert eine Kontostandsänderung gemeinsam mit einer Kreditänderung.
+     * Im MySQL-Modus geschieht das in einer Transaktion, im YAML-Modus über
+     * ein Journal, das bei einem Absturz beim nächsten Start nachgezogen
+     * wird. So kann eine Kreditaufnahme oder -tilgung nicht "halb"
+     * gespeichert werden.
+     */
+    public void saveLoanTransaction(Account account, LoanData loan) {
+        saveLoanTransaction(account, List.of(loan), List.of());
+    }
+
+    /**
+     * Speichert eine Kontostandsänderung gemeinsam mit mehreren Kredit-
+     * änderungen (Aktualisierungen und Löschungen).
+     */
+    public void saveLoanTransaction(Account account,
+                                    Collection<LoanData> loans,
+                                    Collection<UUID> deletedLoanIds) {
+        if (executor.isShutdown()) {
+            return;
+        }
+        List<LoanData> loanSnapshots = List.copyOf(loans);
+        List<UUID> deleted = List.copyOf(deletedLoanIds);
+        try {
+            executor.execute(() -> {
+                AccountData data = account.snapshot();
+                try {
+                    storage.saveTransaction(List.of(data), loanSnapshots, deleted);
+                    account.markSaved(data);
+                } catch (StorageException exception) {
+                    plugin.getLogger().severe("Konto " + data.uniqueId()
+                            + " und Kreditänderungen konnten nicht gemeinsam gespeichert werden: "
+                            + exception.getMessage());
+                }
+            });
+        } catch (RuntimeException exception) {
+            plugin.getLogger().severe("Kreditänderung konnte nicht gespeichert werden: "
                     + exception.getMessage());
         }
     }
@@ -636,12 +725,19 @@ public final class EconomyService {
         });
         executor.shutdown();
 
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
         try {
-            if (!executor.awaitTermination(15, TimeUnit.SECONDS)) {
-                plugin.getLogger().warning("Speichern beim Herunterfahren dauerte länger als 15 Sekunden.");
-                executor.shutdownNow();
+            while (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                if (System.nanoTime() - deadline >= 0) {
+                    List<Runnable> dropped = executor.shutdownNow();
+                    plugin.getLogger().severe("Speicherung beim Stoppen nach 60 Sekunden abgebrochen; "
+                            + dropped.size() + " Vorgänge wurden verworfen. Offene Änderungen können verloren gehen.");
+                    break;
+                }
+                plugin.getLogger().warning("Speichervorgänge laufen noch; der Server wartet auf ihren Abschluss.");
             }
         } catch (InterruptedException exception) {
+            plugin.getLogger().severe("Warten auf Speichervorgänge unterbrochen; offene Änderungen könnten verloren gehen.");
             Thread.currentThread().interrupt();
         }
     }

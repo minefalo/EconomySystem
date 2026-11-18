@@ -7,9 +7,11 @@ import org.bukkit.plugin.java.JavaPlugin;
 import java.io.File;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.channels.FileChannel;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -25,14 +27,22 @@ import java.util.concurrent.ConcurrentHashMap;
  * ({@code accounts/<uuid>.yml}). Der Namensindex wird im Speicher
  * gehalten, damit {@code /money <Spieler>} ohne Datei-Scan funktioniert.
  * Kredite liegen gebündelt in {@code loans.yml}.
+ *
+ * <p>Konto- und Kreditänderungen, die zusammen gehören (Kreditaufnahme,
+ * Rückzahlung, Tilgung), werden zuerst in ein Journal geschrieben. Erst
+ * danach werden die eigentlichen Dateien ersetzt. Bricht der Server
+ * dazwischen ab, zieht {@link #init()} das Journal beim nächsten Start
+ * nach. Die Einträge sind absolut und damit beliebig oft wiederholbar.</p>
  */
 public final class YamlStorage implements EconomyStorage {
 
     private static final String FILE_EXTENSION = ".yml";
+    private static final String JOURNAL_FILE = "pending-transaction.yml";
 
     private final JavaPlugin plugin;
     private final File folder;
     private final File loansFile;
+    private final File journalFile;
     private final Map<String, UUID> nameIndex = new ConcurrentHashMap<>();
     private final Map<UUID, LoanData> loans = new ConcurrentHashMap<>();
 
@@ -40,6 +50,7 @@ public final class YamlStorage implements EconomyStorage {
         this.plugin = plugin;
         this.folder = new File(plugin.getDataFolder(), settings.yamlFolder());
         this.loansFile = new File(plugin.getDataFolder(), "loans.yml");
+        this.journalFile = new File(plugin.getDataFolder(), JOURNAL_FILE);
     }
 
     @Override
@@ -52,8 +63,29 @@ public final class YamlStorage implements EconomyStorage {
         if (!folder.exists() && !folder.mkdirs()) {
             throw new StorageException("Konto-Ordner konnte nicht erstellt werden: " + folder.getAbsolutePath());
         }
+        // Erst den vollständigen Bestand laden, dann ein eventuell offenes
+        // Journal anwenden. Sonst würde loans.yml beim Nachziehen nur die
+        // Kredite aus dem Journal enthalten.
         rebuildNameIndex();
         loadLoansFile();
+        recoverJournal();
+    }
+
+    /**
+     * Zieht eine beim letzten Absturz offen gebliebene Transaktion nach.
+     */
+    private void recoverJournal() {
+        if (!journalFile.exists()) {
+            return;
+        }
+        try {
+            applyJournal(loadJournal());
+        } catch (RuntimeException exception) {
+            throw new StorageException("Offene Speichertransaktion aus " + JOURNAL_FILE
+                    + " konnte nicht nachgezogen werden: " + exception.getMessage(), exception);
+        }
+        deleteJournal();
+        plugin.getLogger().info("Offene Speichertransaktion aus " + JOURNAL_FILE + " wurde nachgezogen.");
     }
 
     private void rebuildNameIndex() {
@@ -140,37 +172,164 @@ public final class YamlStorage implements EconomyStorage {
 
     @Override
     public void save(AccountData account) {
-        File file = fileFor(account.uniqueId());
+        writeAccountFile(account);
+    }
+
+    @Override
+    public void saveAll(Collection<AccountData> accounts) {
+        // Auch mehrere Konten (Überweisung, Zinszyklus) werden über das
+        // Journal gemeinsam abgesichert.
+        saveTransaction(accounts, List.of(), List.of());
+    }
+
+    @Override
+    public void saveTransaction(Collection<AccountData> accounts,
+                                Collection<LoanData> loanUpdates,
+                                Collection<UUID> deletedLoanIds) {
+        if (accounts.isEmpty() && loanUpdates.isEmpty() && deletedLoanIds.isEmpty()) {
+            return;
+        }
+        if (journalFile.exists()) {
+            // Eine frühere Transaktion wurde noch nicht vollständig
+            // angewendet; erst nachziehen, damit nichts überschrieben wird.
+            recoverJournal();
+        }
+
+        YamlConfiguration journal = new YamlConfiguration();
+
+        List<Map<String, Object>> accountEntries = new ArrayList<>();
+        for (AccountData account : accounts) {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("uuid", account.uniqueId().toString());
+            entry.put("name", account.name());
+            entry.put("balance", account.balance().toPlainString());
+            accountEntries.add(entry);
+        }
+        journal.set("accounts", accountEntries);
+
+        if (!loanUpdates.isEmpty()) {
+            List<Map<String, Object>> loanEntries = new ArrayList<>();
+            for (LoanData loan : loanUpdates) {
+                loanEntries.add(loanEntry(loan));
+            }
+            journal.set("loans", loanEntries);
+        }
+
+        if (!deletedLoanIds.isEmpty()) {
+            List<String> deleted = new ArrayList<>();
+            for (UUID id : deletedLoanIds) {
+                deleted.add(id.toString());
+            }
+            journal.set("deleted-loans", deleted);
+        }
+
+        writeAtomically(journalFile, journal);
+        applyJournal(journal);
+        deleteJournal();
+    }
+
+    private YamlConfiguration loadJournal() {
+        return YamlConfiguration.loadConfiguration(journalFile);
+    }
+
+    private void applyJournal(YamlConfiguration journal) {
+        if (!journal.contains("accounts") && !journal.contains("loans")
+                && !journal.contains("deleted-loans")) {
+            throw new StorageException("Journal enthält keine Transaktion: " + JOURNAL_FILE);
+        }
+
+        for (Map<?, ?> entry : journal.getMapList("accounts")) {
+            writeAccountFile(parseAccountEntry(entry));
+        }
+
+        for (Map<?, ?> entry : journal.getMapList("loans")) {
+            LoanData loan = parseLoan(entry, true);
+            loans.put(loan.id(), loan);
+        }
+
+        for (String raw : journal.getStringList("deleted-loans")) {
+            try {
+                loans.remove(UUID.fromString(raw));
+            } catch (IllegalArgumentException exception) {
+                throw new StorageException("Ungültige Kredit-ID im Journal: " + raw, exception);
+            }
+        }
+
+        if (journal.contains("loans") || journal.contains("deleted-loans")) {
+            writeLoansFile();
+        }
+    }
+
+    private void deleteJournal() {
+        try {
+            Files.deleteIfExists(journalFile.toPath());
+        } catch (IOException exception) {
+            plugin.getLogger().warning(JOURNAL_FILE + " konnte nicht entfernt werden; "
+                    + "die Transaktion wird beim nächsten Start erneut angewendet: " + exception.getMessage());
+        }
+    }
+
+    private AccountData parseAccountEntry(Map<?, ?> entry) {
+        try {
+            UUID uniqueId = UUID.fromString(String.valueOf(entry.get("uuid")));
+            Object rawName = entry.get("name");
+            String name = rawName == null ? "unknown" : String.valueOf(rawName);
+            return new AccountData(uniqueId, name, decimal(entry.get("balance")));
+        } catch (RuntimeException exception) {
+            throw new StorageException("Konto-Eintrag im Journal konnte nicht gelesen werden: "
+                    + exception.getMessage(), exception);
+        }
+    }
+
+    private void writeAccountFile(AccountData account) {
         YamlConfiguration config = new YamlConfiguration();
         config.set("name", account.name());
         // Als String speichern, damit die BigDecimal-Präzision exakt erhalten bleibt.
         config.set("balance", account.balance().toPlainString());
         config.set("updated-at", System.currentTimeMillis());
 
-        File temporary = new File(folder, account.uniqueId() + ".tmp");
+        writeAtomically(fileFor(account.uniqueId()), config);
+        putInIndex(account.name(), account.uniqueId());
+    }
+
+    /**
+     * Schreibt eine YAML-Datei über eine temporäre Datei, erzwingt den
+     * Inhalt auf das Datenträger-Medium und ersetzt erst dann das Ziel.
+     */
+    private void writeAtomically(File target, YamlConfiguration config) {
+        File temporary;
+        try {
+            temporary = File.createTempFile(target.getName() + "-", ".tmp",
+                    target.getAbsoluteFile().getParentFile());
+        } catch (IOException exception) {
+            throw new StorageException(target.getName() + " konnte nicht vorbereitet werden: "
+                    + exception.getMessage(), exception);
+        }
+
         try {
             config.save(temporary);
+            forceToDisk(temporary);
             try {
-                Files.move(temporary.toPath(), file.toPath(),
+                Files.move(temporary.toPath(), target.toPath(),
                         StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } catch (AtomicMoveNotSupportedException exception) {
-                Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
             }
         } catch (IOException exception) {
-            throw new StorageException("Konto " + account.uniqueId() + " konnte nicht gespeichert werden.", exception);
+            throw new StorageException(target.getName() + " konnte nicht gespeichert werden: "
+                    + exception.getMessage(), exception);
         } finally {
             if (temporary.exists() && !temporary.delete()) {
                 temporary.deleteOnExit();
             }
         }
-
-        putInIndex(account.name(), account.uniqueId());
     }
 
-    @Override
-    public void saveAll(Collection<AccountData> accounts) {
-        for (AccountData account : accounts) {
-            save(account);
+    private static void forceToDisk(File file) {
+        try (FileChannel channel = FileChannel.open(file.toPath(), StandardOpenOption.WRITE)) {
+            channel.force(true);
+        } catch (IOException ignored) {
+            // Der atomare Austausch schützt weiterhin vor halben Dateien.
         }
     }
 
@@ -200,14 +359,14 @@ public final class YamlStorage implements EconomyStorage {
 
         YamlConfiguration config = YamlConfiguration.loadConfiguration(loansFile);
         for (Map<?, ?> entry : config.getMapList("loans")) {
-            LoanData loan = parseLoan(entry);
+            LoanData loan = parseLoan(entry, false);
             if (loan != null) {
                 loans.put(loan.id(), loan);
             }
         }
     }
 
-    private LoanData parseLoan(Map<?, ?> entry) {
+    private LoanData parseLoan(Map<?, ?> entry, boolean strict) {
         try {
             UUID id = UUID.fromString(String.valueOf(entry.get("id")));
             UUID owner = UUID.fromString(String.valueOf(entry.get("owner")));
@@ -226,6 +385,10 @@ public final class YamlStorage implements EconomyStorage {
                     ((Number) entry.get("due-at")).longValue(),
                     Boolean.TRUE.equals(entry.get("auto-collect")));
         } catch (RuntimeException exception) {
+            if (strict) {
+                throw new StorageException("Kredit-Eintrag im Journal konnte nicht gelesen werden: "
+                        + exception.getMessage(), exception);
+            }
             plugin.getLogger().warning("Kredit-Eintrag in loans.yml konnte nicht gelesen werden: "
                     + exception.getMessage());
             return null;
@@ -243,38 +406,27 @@ public final class YamlStorage implements EconomyStorage {
         YamlConfiguration config = new YamlConfiguration();
         List<Map<String, Object>> entries = new ArrayList<>();
         for (LoanData loan : loans.values()) {
-            Map<String, Object> entry = new LinkedHashMap<>();
-            entry.put("id", loan.id().toString());
-            entry.put("owner", loan.owner().toString());
-            entry.put("owner-name", loan.ownerName());
-            entry.put("principal", loan.principal().toPlainString());
-            entry.put("interest", loan.interest().toPlainString());
-            entry.put("principal-remaining", loan.principalRemaining().toPlainString());
-            entry.put("interest-remaining", loan.interestRemaining().toPlainString());
-            entry.put("days", loan.days());
-            entry.put("created-at", loan.createdAt());
-            entry.put("due-at", loan.dueAt());
-            entry.put("auto-collect", loan.autoCollect());
-            entries.add(entry);
+            entries.add(loanEntry(loan));
         }
         config.set("loans", entries);
 
-        File temporary = new File(loansFile.getParentFile(), "loans.yml.tmp");
-        try {
-            config.save(temporary);
-            try {
-                Files.move(temporary.toPath(), loansFile.toPath(),
-                        StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException exception) {
-                Files.move(temporary.toPath(), loansFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            }
-        } catch (IOException exception) {
-            throw new StorageException("loans.yml konnte nicht gespeichert werden.", exception);
-        } finally {
-            if (temporary.exists() && !temporary.delete()) {
-                temporary.deleteOnExit();
-            }
-        }
+        writeAtomically(loansFile, config);
+    }
+
+    private static Map<String, Object> loanEntry(LoanData loan) {
+        Map<String, Object> entry = new LinkedHashMap<>();
+        entry.put("id", loan.id().toString());
+        entry.put("owner", loan.owner().toString());
+        entry.put("owner-name", loan.ownerName());
+        entry.put("principal", loan.principal().toPlainString());
+        entry.put("interest", loan.interest().toPlainString());
+        entry.put("principal-remaining", loan.principalRemaining().toPlainString());
+        entry.put("interest-remaining", loan.interestRemaining().toPlainString());
+        entry.put("days", loan.days());
+        entry.put("created-at", loan.createdAt());
+        entry.put("due-at", loan.dueAt());
+        entry.put("auto-collect", loan.autoCollect());
+        return entry;
     }
 
     private void putInIndex(String name, UUID uniqueId) {

@@ -88,7 +88,7 @@ public final class EconomySystem extends JavaPlugin {
         }
         economy.setIncomeHandler(creditService::handleIncome);
 
-        getServer().getPluginManager().registerEvents(new PlayerConnectionListener(economy), this);
+        getServer().getPluginManager().registerEvents(new PlayerConnectionListener(this, economy), this);
         getServer().getPluginManager().registerEvents(guiManager, this);
 
         if (!registerCommands()) {

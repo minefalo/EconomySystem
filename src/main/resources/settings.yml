@@ -2,7 +2,7 @@
 #  EconomySystem - Einstellungen
 # ==========================================================
 
-config-version: 1
+config-version: 3
 
 # Test-Befehle (/economysystem-admin tests ...) freischalten.
 # ACHTUNG: Die Test-Befehle verändern echte Kontostände, indem sie
@@ -32,7 +32,7 @@ currency:
   decimals: 2
 
   # Rundungsmodus:
-  # UP, DOWN, CEILING, FLOOR, HALF_UP, HALF_DOWN, HALF_EVEN, UNNECESSARY
+  # UP, DOWN, CEILING, FLOOR, HALF_UP, HALF_DOWN, HALF_EVEN
   rounding: HALF_UP
 
   # Startguthaben für neue Spieler
@@ -63,6 +63,10 @@ interest:
     # Kreditzins - a in der Kreditformel y = x * m + a
     kredit: "1.3"
 
+  # Online-Spieler nach jedem Zyklus über ihre persönliche Gutschrift
+  # informieren (Chat). Bei kurzen Intervallen ggf. deaktivieren.
+  notify-players: true
+
 credits:
   # Kreditsystem aktivieren (/kredit)
   enabled: true
@@ -89,6 +93,54 @@ credits:
   # Intervall in Sekunden, in dem fällige Kredite geprüft werden
   check-interval-seconds: 60
 
+  # Datumsformat für Fälligkeiten (Java DateTimeFormatter).
+  # Beispiele: "dd.MM.yyyy HH:mm", "yyyy-MM-dd HH:mm"
+  date-format: "dd.MM.yyyy HH:mm"
+
+leaderboard:
+  # Einträge pro Seite bei /money top
+  page-size: 10
+
+  # Maximale Anzahl Einträge, die für die Bestenliste geladen werden
+  max-entries: 100
+
+notifications:
+  # Eigenes Guthaben kurz nach dem Beitritt im Chat anzeigen
+  balance-on-join: true
+
+  # Verzögerung in Ticks (20 = 1 Sekunde), damit Join-Nachrichten
+  # anderer Plugins nicht überschrieben werden
+  balance-on-join-delay-ticks: 20
+
+suggestions:
+  # Vorschläge für /pay <Spieler> <Betrag> (Tab-Taste)
+  amounts:
+    - "1"
+    - "10"
+    - "100"
+    - "1000"
+    - "10000"
+
+  # Vorschläge für /kredit add <Betrag>
+  credit-amounts:
+    - "100"
+    - "500"
+    - "1000"
+    - "5000"
+
+  # Vorschläge für /kredit bezahlen [Betrag]
+  repay-amounts:
+    - "10"
+    - "50"
+    - "100"
+    - "500"
+
+  # Vorschläge für die Laufzeit in Tagen
+  credit-days:
+    - "7"
+    - "30"
+    - "90"
+
 storage:
   # Speicherart: YAML oder MYSQL
   type: YAML
@@ -105,9 +157,19 @@ storage:
     host: "localhost"
     port: 3306
     database: "minecraft"
-    username: "root"
+    # Eigenen Datenbanknutzer verwenden; Passwortdatei vor Zugriff schützen.
+    username: "economysystem"
     password: ""
     # Präfix der Tabelle (nur A-Z, a-z, 0-9 und _)
     table-prefix: "economy_"
-    use-ssl: false
+
+    # TLS-Modus: VERIFY_IDENTITY, VERIFY_CA, REQUIRED, PREFERRED oder DISABLED.
+    # VERIFY_IDENTITY prüft Zertifikat und Hostnamen. Leer lassen, um
+    # use-ssl zu verwenden (true -> VERIFY_IDENTITY, false -> DISABLED).
+    ssl-mode: ""
+
+    # Veraltet: wird nur ausgewertet, wenn ssl-mode leer ist.
+    use-ssl: true
+
     connection-timeout-ms: 5000
+    socket-timeout-ms: 30000

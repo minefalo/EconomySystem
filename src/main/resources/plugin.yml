@@ -43,6 +43,9 @@ permissions:
   economysystem.balance.others:
     description: Erlaubt das Anzeigen fremder Guthaben.
     default: op
+  economysystem.balance.top:
+    description: Erlaubt die Bestenliste über /money top.
+    default: true
   economysystem.pay:
     description: Erlaubt das Überweisen von Geld an andere Spieler.
     default: true

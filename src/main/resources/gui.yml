@@ -24,7 +24,7 @@
 # slot:    0 - (rows * 9 - 1)
 # ==========================================================
 
-config-version: 1
+config-version: 2
 
 settings:
   # Menü-System aktivieren (/economysystem-gui)
@@ -35,6 +35,10 @@ settings:
 
   # Inventar schließen, bevor ein Befehl ausgeführt wird
   close-on-click: true
+
+  # Mindestabstand zwischen zwei Klicks auf dasselbe Item in Millisekunden.
+  # 0 = kein Filter. Verhindert Doppelklicks, ohne andere Items zu blockieren.
+  click-cooldown-ms: 200
 
 menus:
   main:

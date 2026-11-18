@@ -33,6 +33,20 @@ public interface EconomyStorage {
     void saveAll(Collection<AccountData> accounts);
 
     /**
+     * Speichert Konto- und Kreditänderungen in einem Schritt. Die
+     * Implementierungen müssen dafür sorgen, dass ein Absturz nicht zu
+     * einem halb gespeicherten Zustand führt (MySQL: eine Transaktion,
+     * YAML: Journal, das beim Start nachgezogen wird).
+     *
+     * @param accounts        zu speichernde Kontostände
+     * @param loans           anzulegende oder zu aktualisierende Kredite
+     * @param deletedLoanIds  zu löschende Kredite
+     */
+    void saveTransaction(Collection<AccountData> accounts,
+                         Collection<LoanData> loans,
+                         Collection<UUID> deletedLoanIds);
+
+    /**
      * Lädt alle gespeicherten Kredite.
      */
     default List<LoanData> loadLoans() {

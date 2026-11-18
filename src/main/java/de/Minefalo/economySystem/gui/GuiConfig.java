@@ -40,6 +40,7 @@ public final class GuiConfig {
     private YamlConfiguration config;
     private boolean enabled;
     private boolean closeOnClick;
+    private long clickCooldownMs;
     private String defaultMenu;
     private Map<String, Menu> menus = Map.of();
 
@@ -61,6 +62,7 @@ public final class GuiConfig {
 
         enabled = config.getBoolean("settings.enabled", true);
         closeOnClick = config.getBoolean("settings.close-on-click", true);
+        clickCooldownMs = clamp(config.getLong("settings.click-cooldown-ms", 200L), 0L, 5000L);
         defaultMenu = config.getString("settings.default-menu", "main");
         menus = parseMenus();
     }
@@ -71,6 +73,14 @@ public final class GuiConfig {
 
     public boolean closeOnClick() {
         return closeOnClick;
+    }
+
+    /**
+     * Mindestabstand zwischen zwei Klicks auf dasselbe Item in
+     * Millisekunden. {@code 0} deaktiviert den Filter.
+     */
+    public long clickCooldownMs() {
+        return clickCooldownMs;
     }
 
     /**

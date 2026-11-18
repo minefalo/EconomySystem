@@ -13,6 +13,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -40,6 +41,9 @@ public final class Settings {
     private Interest interest;
     private boolean testsEnabled;
     private Credits credits;
+    private Leaderboard leaderboard;
+    private Notifications notifications;
+    private Suggestions suggestions;
 
     public Settings(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -87,11 +91,12 @@ public final class Settings {
                 config.getString("storage.mysql.host", "localhost"),
                 clamp(config.getInt("storage.mysql.port", 3306), 1, 65535),
                 config.getString("storage.mysql.database", "minecraft"),
-                config.getString("storage.mysql.username", "root"),
+                config.getString("storage.mysql.username", "economysystem"),
                 config.getString("storage.mysql.password", ""),
                 config.getString("storage.mysql.table-prefix", "economy_"),
-                config.getBoolean("storage.mysql.use-ssl", false),
-                clamp(config.getInt("storage.mysql.connection-timeout-ms", 5000), 1000, 60000)
+                readSslMode(),
+                clamp(config.getInt("storage.mysql.connection-timeout-ms", 5000), 1000, 60000),
+                clamp(config.getInt("storage.mysql.socket-timeout-ms", 30000), 1000, 120000)
         );
 
         this.interest = readInterest();
@@ -99,6 +104,33 @@ public final class Settings {
         this.testsEnabled = booleanValue("tests.enabled", false);
 
         this.credits = readCredits();
+        this.leaderboard = readLeaderboard();
+        this.notifications = readNotifications();
+        this.suggestions = readSuggestions();
+    }
+
+    /**
+     * Liest {@code storage.mysql.ssl-mode}. Leere Werte fallen auf das
+     * bisherige {@code use-ssl} zurück, damit bestehende Konfigurationen
+     * unverändert funktionieren.
+     */
+    private String readSslMode() {
+        String raw = config.getString("storage.mysql.ssl-mode", "");
+        if (raw == null || raw.isBlank()) {
+            return config.getBoolean("storage.mysql.use-ssl", true)
+                    ? "VERIFY_IDENTITY"
+                    : "DISABLED";
+        }
+
+        String mode = raw.trim().toUpperCase(Locale.ROOT);
+        return switch (mode) {
+            case "DISABLED", "PREFERRED", "REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY" -> mode;
+            default -> {
+                plugin.getLogger().warning("Unbekannter storage.mysql.ssl-mode '" + raw
+                        + "' - verwende VERIFY_IDENTITY.");
+                yield "VERIFY_IDENTITY";
+            }
+        };
     }
 
     private Credits readCredits() {
@@ -115,8 +147,9 @@ public final class Settings {
             maxDays = minDays;
         }
         int checkInterval = clamp(intValue("credits.check-interval-seconds", 60), 5, 3600);
+        String dateFormat = dateFormat("credits.date-format", "dd.MM.yyyy HH:mm");
         return new Credits(enabled, maxLoans, limitMultiplier, slope, minAmount,
-                minDays, maxDays, checkInterval);
+                minDays, maxDays, checkInterval, dateFormat);
     }
 
     private Interest readInterest() {
@@ -126,7 +159,73 @@ public final class Settings {
                 1, MAX_INTERVAL_MINUTES);
         BigDecimal savingsFactor = positiveDecimal("interest.factors.spar", "1.3");
         BigDecimal creditFactor = positiveDecimal("interest.factors.kredit", "1.3");
-        return new Interest(enabled, startTime, intervalMinutes, savingsFactor, creditFactor);
+        boolean notifyPlayers = booleanValue("interest.notify-players", true);
+        return new Interest(enabled, startTime, intervalMinutes, savingsFactor, creditFactor, notifyPlayers);
+    }
+
+    private Leaderboard readLeaderboard() {
+        int pageSize = clamp(intValue("leaderboard.page-size", 10), 1, 50);
+        int maxEntries = clamp(intValue("leaderboard.max-entries", 100), pageSize, 1000);
+        return new Leaderboard(pageSize, maxEntries);
+    }
+
+    private Notifications readNotifications() {
+        boolean balanceOnJoin = booleanValue("notifications.balance-on-join", true);
+        int delay = clamp(intValue("notifications.balance-on-join-delay-ticks", 20), 0, 200);
+        return new Notifications(balanceOnJoin, delay);
+    }
+
+    private Suggestions readSuggestions() {
+        return new Suggestions(
+                textList("suggestions.amounts", "1", "10", "100", "1000", "10000"),
+                textList("suggestions.credit-amounts", "100", "500", "1000", "5000"),
+                textList("suggestions.repay-amounts", "10", "50", "100", "500"),
+                textList("suggestions.credit-days", "7", "30", "90"));
+    }
+
+    /**
+     * Liest eine Liste von Textwerten (z. B. Tab-Vorschläge). Zahlen in der
+     * YAML-Datei werden ebenfalls akzeptiert.
+     */
+    private List<String> textList(String path, String... defaults) {
+        List<?> raw = config.getList(path);
+        List<String> values = new ArrayList<>();
+        if (raw != null) {
+            for (Object item : raw) {
+                if (item == null) {
+                    continue;
+                }
+                String text = String.valueOf(item).trim();
+                if (!text.isEmpty()) {
+                    values.add(text);
+                }
+            }
+        }
+        if (raw == null) {
+            values.addAll(List.of(defaults));
+        }
+        return List.copyOf(values);
+    }
+
+    /**
+     * Prüft ein Datumsformat, damit ein Tippfehler nicht erst beim Anzeigen
+     * eines Kredits auffällt.
+     */
+    private String dateFormat(String path, String fallback) {
+        String raw = config.getString(path, fallback);
+        if (raw == null || raw.isBlank()) {
+            plugin.getLogger().warning("Leeres Datumsformat für " + path
+                    + " - verwende " + fallback + ".");
+            return fallback;
+        }
+        try {
+            DateTimeFormatter.ofPattern(raw);
+            return raw;
+        } catch (IllegalArgumentException exception) {
+            plugin.getLogger().warning("Ungültiges Datumsformat für " + path + ": '" + raw
+                    + "' - verwende " + fallback + ".");
+            return fallback;
+        }
     }
 
     /**
@@ -154,11 +253,22 @@ public final class Settings {
 
         YamlFactorEditor.writeFactor(lines, key, value);
 
+        Path temporary = null;
         try {
-            Files.write(file.toPath(), lines, StandardCharsets.UTF_8);
+            temporary = Files.createTempFile(file.toPath().toAbsolutePath().getParent(), "settings", ".tmp");
+            Files.write(temporary, lines, StandardCharsets.UTF_8);
+            ConfigUpdater.replaceFile(temporary, file.toPath());
         } catch (IOException exception) {
             throw new IllegalStateException("settings.yml konnte nicht gespeichert werden: "
                     + exception.getMessage(), exception);
+        } finally {
+            if (temporary != null) {
+                try {
+                    Files.deleteIfExists(temporary);
+                } catch (IOException exception) {
+                    plugin.getLogger().warning("Temporäre settings.yml konnte nicht entfernt werden: " + exception.getMessage());
+                }
+            }
         }
 
         config.set("interest.factors." + key, factor.stripTrailingZeros());
@@ -176,7 +286,12 @@ public final class Settings {
 
     private RoundingMode parseRounding(String raw) {
         try {
-            return RoundingMode.valueOf(raw.trim().toUpperCase(Locale.ROOT));
+            RoundingMode mode = RoundingMode.valueOf(raw.trim().toUpperCase(Locale.ROOT));
+            if (mode == RoundingMode.UNNECESSARY) {
+                plugin.getLogger().warning("Rundungsmodus UNNECESSARY ist für berechnete Beträge nicht geeignet - verwende HALF_UP.");
+                return RoundingMode.HALF_UP;
+            }
+            return mode;
         } catch (IllegalArgumentException exception) {
             plugin.getLogger().warning("Unbekannter Rundungsmodus '" + raw + "' - verwende HALF_UP.");
             return RoundingMode.HALF_UP;
@@ -332,6 +447,18 @@ public final class Settings {
         return credits;
     }
 
+    public Leaderboard leaderboard() {
+        return leaderboard;
+    }
+
+    public Notifications notifications() {
+        return notifications;
+    }
+
+    public Suggestions suggestions() {
+        return suggestions;
+    }
+
     /**
      * Einstellungen des Kreditsystems.
      *
@@ -343,6 +470,7 @@ public final class Settings {
      * @param minDays              minimale Laufzeit in Tagen
      * @param maxDays              maximale Laufzeit in Tagen
      * @param checkIntervalSeconds Intervall, in dem fällige Kredite geprüft werden
+     * @param dateFormat           Format für Fälligkeitsdaten
      */
     public record Credits(boolean enabled,
                           int maxLoans,
@@ -351,7 +479,8 @@ public final class Settings {
                           BigDecimal minimumAmount,
                           int minDays,
                           int maxDays,
-                          int checkIntervalSeconds) {
+                          int checkIntervalSeconds,
+                          String dateFormat) {
 
         /**
          * Zinsen für eine Laufzeit nach {@code y = x * m + a}.
@@ -370,8 +499,9 @@ public final class Settings {
                         String username,
                         String password,
                         String tablePrefix,
-                        boolean useSsl,
-                        int connectionTimeoutMs) {
+                        String sslMode,
+                        int connectionTimeoutMs,
+                        int socketTimeoutMs) {
     }
 
     /**
@@ -382,12 +512,14 @@ public final class Settings {
      * @param intervalMinutes Abstand zwischen zwei Läufen in Minuten
      * @param savingsFactor   a im Sparzins (y = a * sqrt(x))
      * @param creditFactor    a im Kreditzins für neue Kredite
+     * @param notifyPlayers   Online-Spieler über ihre Gutschrift informieren
      */
     public record Interest(boolean enabled,
                            LocalTime startTime,
                            int intervalMinutes,
                            BigDecimal savingsFactor,
-                           BigDecimal creditFactor) {
+                           BigDecimal creditFactor,
+                           boolean notifyPlayers) {
 
         public BigDecimal factor(InterestType type) {
             return type == InterestType.SAVINGS ? savingsFactor : creditFactor;
@@ -395,8 +527,36 @@ public final class Settings {
 
         public Interest withFactor(InterestType type, BigDecimal factor) {
             return type == InterestType.SAVINGS
-                    ? new Interest(enabled, startTime, intervalMinutes, factor, creditFactor)
-                    : new Interest(enabled, startTime, intervalMinutes, savingsFactor, factor);
+                    ? new Interest(enabled, startTime, intervalMinutes, factor, creditFactor, notifyPlayers)
+                    : new Interest(enabled, startTime, intervalMinutes, savingsFactor, factor, notifyPlayers);
         }
+    }
+
+    /**
+     * Einstellungen für /money top.
+     *
+     * @param pageSize   Einträge pro Seite
+     * @param maxEntries maximale Anzahl geladener Einträge
+     */
+    public record Leaderboard(int pageSize, int maxEntries) {
+    }
+
+    /**
+     * Kleine Benachrichtigungen für Spieler.
+     *
+     * @param balanceOnJoin            Guthaben nach dem Beitritt anzeigen
+     * @param balanceOnJoinDelayTicks  Verzögerung in Ticks (20 = 1 Sekunde)
+     */
+    public record Notifications(boolean balanceOnJoin, int balanceOnJoinDelayTicks) {
+    }
+
+    /**
+     * Vorschläge für die Tab-Vervollständigung. Die Werte werden unverändert
+     * angezeigt; Beträge und Tage werden nicht zusätzlich validiert.
+     */
+    public record Suggestions(List<String> amounts,
+                              List<String> creditAmounts,
+                              List<String> repayAmounts,
+                              List<String> creditDays) {
     }
 }

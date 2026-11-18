@@ -6,8 +6,8 @@ import de.Minefalo.economySystem.config.Messages;
 import de.Minefalo.economySystem.config.Settings;
 import de.Minefalo.economySystem.currency.Currency;
 import de.Minefalo.economySystem.economy.Account;
+import de.Minefalo.economySystem.command.tests.TestCommand;
 import de.Minefalo.economySystem.economy.EconomyService;
-import de.Minefalo.economySystem.economy.InterestResult;
 import de.Minefalo.economySystem.help.HelpBook;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
@@ -19,7 +19,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.CompletableFuture;
 
 /**
  * /economysystem-admin - Admin-Befehle für Geldverwaltung, Zinsen,
@@ -30,10 +29,13 @@ public final class EconomySystemAdminCommand extends AbstractEconomyCommand {
     private static final String PERMISSION_ADMIN = "economysystem.admin";
     private static final String PERMISSION_RELOAD = "economysystem.reload";
     private static final String PERMISSION_TESTS = "economysystem.tests";
+    private static final String TEST_COMMAND_CLASS =
+            "de.Minefalo.economySystem.command.tests.InterestCycleTestCommand";
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
-    private static final int MAX_TEST_CYCLES = 1000;
 
     private final HelpBook helpBook;
+    private TestCommand testCommand;
+    private boolean testCommandLoaded;
 
     public EconomySystemAdminCommand(EconomySystem plugin, EconomyService economy, HelpBook helpBook) {
         super(plugin, economy);
@@ -57,7 +59,7 @@ public final class EconomySystemAdminCommand extends AbstractEconomyCommand {
             case "reload" -> reload(sender);
             case "money", "geld" -> money(sender, args);
             case "zinsen", "interest" -> interest(sender, args);
-            case "tests", "test" -> tests(sender, args);
+            case "tests", "test" -> runTests(sender, args);
             default -> messages().send(sender, "usage-admin");
         }
         return true;
@@ -98,8 +100,13 @@ public final class EconomySystemAdminCommand extends AbstractEconomyCommand {
             return;
         }
 
-        plugin.reload();
-        messages().send(sender, "reload-success");
+        try {
+            plugin.reload();
+            messages().send(sender, "reload-success");
+        } catch (RuntimeException exception) {
+            plugin.getLogger().severe("Konfiguration konnte nicht vollständig neu geladen werden: " + exception);
+            messages().send(sender, "settings-error");
+        }
     }
 
     private void showHelp(CommandSender sender, String label, String[] args) {
@@ -266,114 +273,34 @@ public final class EconomySystemAdminCommand extends AbstractEconomyCommand {
     }
 
     /**
-     * {@code /economysystem-admin tests zins-zyklus add <Anzahl>} - führt den
-     * Zinszyklus sofort {@code <Anzahl>}-mal aus und simuliert damit
-     * vergangene Zyklen. Nur aktiv, wenn {@code tests.enabled} in der
-     * settings.yml auf {@code true} steht.
+     * Leitet an den optionalen Test-Befehl weiter. In Produktions-Builds
+     * ({@code mvn -Pproduction}) fehlt die Implementierung; dann bleibt nur
+     * der Hinweis, dass die Testbefehle deaktiviert sind.
      */
-    private void tests(CommandSender sender, String[] args) {
-        if (!plugin.settings().testsEnabled()) {
-            messages().send(sender, "tests-disabled");
+    private void runTests(CommandSender sender, String[] args) {
+        TestCommand command = testCommand();
+        if (command == null) {
+            messages().send(sender, "tests-unavailable");
             return;
         }
-        if (!sender.hasPermission(PERMISSION_TESTS)) {
-            noPermission(sender);
-            return;
-        }
-        if (args.length != 4
-                || !matchesIgnoreCase(args[1], "zins-zyklus", "zinszyklus", "interest-cycle")
-                || !args[2].equalsIgnoreCase("add")) {
-            messages().send(sender, "usage-admin-tests");
-            return;
-        }
-
-        int cycles = parseCycleCount(sender, args[3]);
-        if (cycles <= 0) {
-            return;
-        }
-
-        simulateCycles(sender, cycles);
+        command.execute(sender, args);
     }
 
-    private int parseCycleCount(CommandSender sender, String input) {
-        try {
-            int cycles = Integer.parseInt(input.trim());
-            if (cycles >= 1 && cycles <= MAX_TEST_CYCLES) {
-                return cycles;
-            }
-        } catch (NumberFormatException ignored) {
-            // Fällt unten auf die Fehlermeldung zurück.
-        }
-        messages().send(sender, "tests-cycles-invalid", "max", String.valueOf(MAX_TEST_CYCLES));
-        return 0;
-    }
-
-    private void simulateCycles(CommandSender sender, int cycles) {
-        BigDecimal factor = plugin.settings().interest().savingsFactor();
-        EconomyService economy = this.economy;
-
-        messages().send(sender, "tests-started",
-                "cycles", String.valueOf(cycles),
-                "factor", factor.stripTrailingZeros().toPlainString());
-        plugin.getLogger().info("Test: " + cycles + " Zinszyklen werden sofort simuliert (Sparzins-Faktor "
-                + factor.stripTrailingZeros().toPlainString() + ").");
-
-        BigDecimal[] totalCredited = {BigDecimal.ZERO};
-        int[] accountsCredited = {0};
-        int[] accountsChecked = {0};
-
-        // Die Zyklen werden nacheinander ausgeführt, damit jeder Lauf auf dem
-        // Guthaben des vorherigen aufbaut (wie bei echten Zyklen).
-        CompletableFuture<InterestResult> chain = CompletableFuture.completedFuture(null);
-        for (int cycle = 0; cycle < cycles; cycle++) {
-            chain = chain.thenCompose(previous -> economy.runInterestCycle(factor)
-                    .thenApply(result -> {
-                        totalCredited[0] = totalCredited[0].add(result.totalCredited());
-                        accountsCredited[0] += result.accountsCredited();
-                        accountsChecked[0] = result.accountsChecked();
-                        return result;
-                    }));
-        }
-
-        chain.whenComplete((result, error) -> {
-            if (!plugin.isEnabled()) {
-                return;
-            }
-            String errorMessage = error == null ? null : messageOf(error);
-            if (errorMessage != null) {
-                plugin.getLogger().severe("Test-Zinszyklen fehlgeschlagen: " + errorMessage);
-            }
-
-            plugin.getServer().getScheduler().runTask(plugin, () -> {
-                if (errorMessage != null) {
-                    messages().send(sender, "tests-failed", "error", errorMessage);
-                    return;
-                }
-                plugin.refreshPlaceholders();
-                messages().send(sender, "tests-result",
-                        "cycles", String.valueOf(cycles),
-                        "credited", String.valueOf(accountsCredited[0]),
-                        "checked", String.valueOf(accountsChecked[0]),
-                        "total", currency().format(totalCredited[0]));
-            });
-        });
-    }
-
-    private static boolean matchesIgnoreCase(String input, String... options) {
-        for (String option : options) {
-            if (input.equalsIgnoreCase(option)) {
-                return true;
+    private TestCommand testCommand() {
+        if (!testCommandLoaded) {
+            testCommandLoaded = true;
+            try {
+                Class<?> type = Class.forName(TEST_COMMAND_CLASS);
+                testCommand = (TestCommand) type
+                        .getConstructor(EconomySystem.class, EconomyService.class)
+                        .newInstance(plugin, economy);
+            } catch (ClassNotFoundException exception) {
+                // Produktions-Build ohne Testbefehle.
+            } catch (ReflectiveOperationException | ClassCastException exception) {
+                plugin.getLogger().warning("Test-Befehl konnte nicht geladen werden: " + exception);
             }
         }
-        return false;
-    }
-
-    private static String messageOf(Throwable error) {
-        Throwable cause = error;
-        while (cause.getCause() != null && cause.getCause() != cause) {
-            cause = cause.getCause();
-        }
-        return cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage();
+        return testCommand;
     }
 
     @Override
@@ -385,7 +312,8 @@ public final class EconomySystemAdminCommand extends AbstractEconomyCommand {
 
         if (args.length == 1) {
             List<String> options = new ArrayList<>(List.of("help", "info", "reload", "money", "zinsen"));
-            if (plugin.settings().testsEnabled() && sender.hasPermission(PERMISSION_TESTS)) {
+            if (plugin.settings().testsEnabled() && sender.hasPermission(PERMISSION_TESTS)
+                    && testCommand() != null) {
                 options.add("tests");
             }
             return filter(options, args[0]);

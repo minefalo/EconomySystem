@@ -39,8 +39,13 @@ public final class PayCommand extends AbstractEconomyCommand {
             return true;
         }
 
+        Player recipient = Bukkit.getPlayerExact(args[0]);
+        if (recipient == null) {
+            messages().send(sender, "pay-recipient-offline");
+            return true;
+        }
         Account source = economy.account(player.getUniqueId(), player.getName());
-        Account target = resolve(sender, args[0]);
+        Account target = economy.account(recipient.getUniqueId(), recipient.getName());
         if (target == null) {
             return true;
         }
@@ -106,7 +111,7 @@ public final class PayCommand extends AbstractEconomyCommand {
             return filter(names, args[0]);
         }
         if (args.length == 2) {
-            return filter(List.of("1", "10", "100", "1000"), args[1]);
+            return filter(plugin.settings().suggestions().amounts(), args[1]);
         }
         return List.of();
     }

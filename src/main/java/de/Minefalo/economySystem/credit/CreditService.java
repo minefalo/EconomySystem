@@ -40,8 +40,6 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class CreditService {
 
-    private static final DateTimeFormatter DUE_FORMAT = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
-
     /**
      * Ergebnis einer Kreditaufnahme.
      */
@@ -67,6 +65,7 @@ public final class CreditService {
     private final Map<UUID, Loan> loans = new ConcurrentHashMap<>();
 
     private BukkitTask checkTask;
+    private final java.util.Set<UUID> pendingCollections = ConcurrentHashMap.newKeySet();
 
     public CreditService(EconomySystem plugin, EconomyService economy) {
         this.plugin = plugin;
@@ -76,6 +75,10 @@ public final class CreditService {
     public void init() {
         for (LoanData data : economy.storage().loadLoans()) {
             Loan loan = Loan.fromData(data);
+            if (loan.isPaid()) {
+                economy.deleteLoanAsync(loan.id());
+                continue;
+            }
             loans.put(loan.id(), loan);
         }
         if (!loans.isEmpty()) {
@@ -202,11 +205,13 @@ public final class CreditService {
         Loan loan = new Loan(UUID.randomUUID(), account.uniqueId(), account.name(),
                 normalized, interest, days, now, dueAt);
 
-        if (!economy.depositDirect(account, normalized)) {
+        if (!economy.depositUnsaved(account, normalized)) {
             return Result.of(Status.MAX_BALANCE);
         }
         loans.put(loan.id(), loan);
-        persist(loan);
+        // Auszahlung und Kredit gemeinsam speichern: kein Gratis-Geld und
+        // kein Kredit ohne Auszahlung nach einem Absturz.
+        economy.saveLoanTransaction(account, loan.snapshot());
         return new Result(Status.SUCCESS, loan);
     }
 
@@ -233,6 +238,7 @@ public final class CreditService {
     private BigDecimal payLoans(Account account, BigDecimal budget) {
         BigDecimal left = budget;
         BigDecimal paidTotal = BigDecimal.ZERO;
+        List<Loan> changed = new ArrayList<>();
 
         for (Loan loan : loansOf(account.uniqueId())) {
             if (left.signum() <= 0) {
@@ -242,13 +248,16 @@ public final class CreditService {
             if (capacity.signum() <= 0) {
                 continue;
             }
-            if (!economy.withdraw(account, capacity)) {
+            if (!economy.withdrawUnsaved(account, capacity)) {
                 break;
             }
             BigDecimal paid = loan.pay(capacity);
             left = left.subtract(paid);
             paidTotal = paidTotal.add(paid);
-            finishOrPersist(loan);
+            changed.add(loan);
+        }
+        if (!changed.isEmpty()) {
+            persistTransaction(account, changed);
         }
         return currency().normalize(paidTotal);
     }
@@ -271,6 +280,7 @@ public final class CreditService {
 
         BigDecimal left = amount;
         BigDecimal seized = BigDecimal.ZERO;
+        List<Loan> changed = new ArrayList<>();
         for (Loan loan : collecting) {
             if (left.signum() <= 0) {
                 break;
@@ -279,13 +289,16 @@ public final class CreditService {
             if (capacity.signum() <= 0) {
                 continue;
             }
-            if (!economy.withdraw(account, capacity)) {
+            if (!economy.withdrawUnsaved(account, capacity)) {
                 break;
             }
             BigDecimal paid = loan.pay(capacity);
             left = left.subtract(paid);
             seized = seized.add(paid);
-            finishOrPersist(loan);
+            changed.add(loan);
+        }
+        if (!changed.isEmpty()) {
+            persistTransaction(account, changed);
         }
 
         if (seized.signum() > 0) {
@@ -307,16 +320,29 @@ public final class CreditService {
             if (!loan.isOverdue(now)) {
                 continue;
             }
-            try {
-                Account account = economy.account(loan.owner(), loan.ownerName());
-                collect(loan, account);
-            } catch (StorageException exception) {
-                plugin.getLogger().warning("Fälliger Kredit " + loan.id()
-                        + " konnte nicht verarbeitet werden: " + exception.getMessage());
-            } catch (RuntimeException exception) {
-                plugin.getLogger().severe("Fälliger Kredit " + loan.id()
-                        + " konnte nicht verarbeitet werden: " + exception);
+            if (!pendingCollections.add(loan.id())) {
+                continue;
             }
+            economy.accountAsync(loan.owner(), loan.ownerName()).whenComplete((account, error) -> {
+                if (!plugin.isEnabled()) {
+                    pendingCollections.remove(loan.id());
+                    return;
+                }
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    pendingCollections.remove(loan.id());
+                    if (error != null) {
+                        plugin.getLogger().warning("Fälliger Kredit " + loan.id()
+                                + " konnte nicht geladen werden: " + error.getMessage());
+                    } else if (loans.containsKey(loan.id()) && loan.isOverdue(System.currentTimeMillis())) {
+                        try {
+                            collect(loan, account);
+                        } catch (StorageException exception) {
+                            plugin.getLogger().warning("Fälliger Kredit " + loan.id()
+                                    + " konnte nicht verarbeitet werden: " + exception.getMessage());
+                        }
+                    }
+                });
+            });
         }
     }
 
@@ -329,21 +355,24 @@ public final class CreditService {
         BigDecimal paid = BigDecimal.ZERO;
         if (capacity.signum() > 0) {
             BigDecimal taken = capacity.min(loan.remaining());
-            economy.setBalance(account, currency.normalize(balance.subtract(taken)));
+            economy.setBalanceUnsaved(account, currency.normalize(balance.subtract(taken)));
             paid = loan.pay(taken);
         }
 
         if (loan.isPaid()) {
+            economy.saveLoanTransaction(account, List.of(), List.of(loan.id()));
+            loans.remove(loan.id());
             notifyPlayer(loan.owner(), "credit-forced-paid",
                     "amount", currency.format(paid),
                     "credit", currency.format(loan.principal()));
-            finishOrPersist(loan);
+            notifyPlayer(loan.owner(), "credit-completed",
+                    "amount", currency.format(loan.principal()));
             return;
         }
 
         if (account.balance().compareTo(floor) <= 0 && !loan.autoCollect()) {
             BigDecimal waived = loan.waiveInterest();
-            persist(loan);
+            economy.saveLoanTransaction(account, loan.snapshot());
             plugin.getLogger().info("Kredit " + loan.id() + " von " + loan.ownerName()
                     + " ist überfällig: Minimalguthaben erreicht, "
                     + currency.format(waived) + " Zinsen erlassen, offen bleiben "
@@ -357,26 +386,39 @@ public final class CreditService {
         }
 
         if (paid.signum() > 0) {
-            persist(loan);
+            economy.saveLoanTransaction(account, loan.snapshot());
             notifyPlayer(loan.owner(), "credit-forced-paid",
                     "amount", currency.format(paid),
                     "credit", currency.format(loan.principal()));
         }
     }
 
-    private void finishOrPersist(Loan loan) {
-        if (loan.isPaid()) {
+    /**
+     * Sichert Kontostand und alle geänderten Kredite in einem Schritt.
+     * Vollständig bezahlte Kredite werden dabei gelöscht und ihre
+     * Abschlussmeldung versendet.
+     */
+    private void persistTransaction(Account account, List<Loan> changed) {
+        List<LoanData> upserts = new ArrayList<>();
+        List<UUID> deleted = new ArrayList<>();
+        List<Loan> completed = new ArrayList<>();
+
+        for (Loan loan : changed) {
+            if (loan.isPaid()) {
+                deleted.add(loan.id());
+                completed.add(loan);
+            } else {
+                upserts.add(loan.snapshot());
+            }
+        }
+
+        economy.saveLoanTransaction(account, upserts, deleted);
+
+        for (Loan loan : completed) {
             loans.remove(loan.id());
-            economy.deleteLoanAsync(loan.id());
             notifyPlayer(loan.owner(), "credit-completed",
                     "amount", currency().format(loan.principal()));
-            return;
         }
-        persist(loan);
-    }
-
-    private void persist(Loan loan) {
-        economy.saveLoanAsync(loan.snapshot());
     }
 
     private void notifyPlayer(UUID uniqueId, String key, String... placeholders) {
@@ -392,9 +434,10 @@ public final class CreditService {
     }
 
     /**
-     * Formatiert ein Fälligkeitsdatum für Nachrichten.
+     * Formatiert ein Fälligkeitsdatum mit dem konfigurierten Format.
      */
-    public static String formatDue(Loan loan) {
-        return loan.dueDate().format(DUE_FORMAT);
+    public String formatDue(Loan loan) {
+        return loan.dueDate().format(DateTimeFormatter.ofPattern(
+                plugin.settings().credits().dateFormat()));
     }
 }

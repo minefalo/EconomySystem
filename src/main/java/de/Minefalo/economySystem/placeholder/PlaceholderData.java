@@ -3,11 +3,9 @@ package de.Minefalo.economySystem.placeholder;
 import de.Minefalo.economySystem.EconomySystem;
 import de.Minefalo.economySystem.config.Settings;
 import de.Minefalo.economySystem.currency.Currency;
-import de.Minefalo.economySystem.economy.Account;
 import de.Minefalo.economySystem.economy.EconomyService;
 import de.Minefalo.economySystem.economy.InterestCalculator;
 import de.Minefalo.economySystem.storage.AccountData;
-import org.bukkit.Bukkit;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.math.BigDecimal;
@@ -119,17 +117,9 @@ public final class PlaceholderData {
             return cached.balance();
         }
 
-        if (!Bukkit.isPrimaryThread()) {
-            // Asynchron keine blockierenden Speicherzugriffe: Wert kommt
-            // beim nächsten Abruf aus dem Cache.
-            refreshAsync(name, key);
-            return null;
-        }
-
-        Optional<Account> account = economy.find(name);
-        BigDecimal balance = account.map(Account::balance).orElse(null);
-        balances.put(key, new CachedBalance(balance, now));
-        return balance;
+        // Auch auf dem Haupt-Thread niemals synchron auf den Speicher warten.
+        refreshAsync(name, key);
+        return null;
     }
 
     private void refreshAsync(String name, String key) {

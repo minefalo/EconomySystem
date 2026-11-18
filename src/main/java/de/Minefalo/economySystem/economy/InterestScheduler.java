@@ -2,6 +2,7 @@ package de.Minefalo.economySystem.economy;
 
 import de.Minefalo.economySystem.EconomySystem;
 import de.Minefalo.economySystem.config.Settings;
+import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.math.BigDecimal;
@@ -89,7 +90,31 @@ public final class InterestScheduler {
                     + " von " + result.accountsChecked() + " Konten verzinst, insgesamt "
                     + plugin.settings().currency().format(result.totalCredited())
                     + " gutgeschrieben.");
+            if (interest.notifyPlayers()) {
+                notifyPlayers(result);
+            }
             plugin.refreshPlaceholders();
+        });
+    }
+
+    /**
+     * Informiert Online-Spieler über ihre persönliche Zinsgutschrift. Läuft
+     * auf dem Haupt-Thread, weil Chat und Spielerzugriffe dorthin gehören.
+     */
+    private void notifyPlayers(InterestResult result) {
+        if (!plugin.isEnabled()) {
+            return;
+        }
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            for (Player player : plugin.getServer().getOnlinePlayers()) {
+                BigDecimal credit = result.credits().get(player.getUniqueId());
+                if (credit == null || credit.signum() <= 0
+                        || !player.hasPermission("economysystem.balance")) {
+                    continue;
+                }
+                plugin.messages().send(player, "interest-credited",
+                        "amount", plugin.settings().currency().format(credit));
+            }
         });
     }
 

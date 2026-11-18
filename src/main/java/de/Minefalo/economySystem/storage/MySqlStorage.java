@@ -33,6 +33,8 @@ public final class MySqlStorage implements EconomyStorage {
     private final Object lock = new Object();
 
     private Connection connection;
+    private long retryAfterNanos;
+    private static final long RETRY_DELAY_NANOS = java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
 
     public MySqlStorage(JavaPlugin plugin, Settings settings) {
         this.plugin = plugin;
@@ -78,9 +80,13 @@ public final class MySqlStorage implements EconomyStorage {
                 createTable(connection);
             } catch (SQLException exception) {
                 closeConnection();
+                String hint = "DISABLED".equals(config.sslMode())
+                        ? ""
+                        : " Prüfe bei aktivem TLS, ob das Serverzertifikat vertrauenswürdig ist und"
+                                + " zum Host '" + config.host() + "' passt, oder passe storage.mysql.ssl-mode an.";
                 throw new StorageException("Verbindung zu MySQL fehlgeschlagen ("
                         + config.host() + ":" + config.port() + "/" + config.database() + "): "
-                        + exception.getMessage(), exception);
+                        + exception.getMessage() + hint, exception);
             }
         }
 
@@ -89,14 +95,17 @@ public final class MySqlStorage implements EconomyStorage {
     }
 
     private Connection openConnection() throws SQLException {
+        // Ohne TLS muss der Treiber den öffentlichen Schlüssel des Servers
+        // abrufen dürfen, sonst scheitert caching_sha2_password (MySQL 8).
+        boolean allowPublicKeyRetrieval = "DISABLED".equals(config.sslMode())
+                || "PREFERRED".equals(config.sslMode());
         String url = "jdbc:mysql://" + config.host() + ":" + config.port() + "/" + config.database()
-                + "?useSSL=" + config.useSsl()
-                + "&allowPublicKeyRetrieval=true"
-                + "&autoReconnect=true"
+                + "?sslMode=" + config.sslMode()
+                + "&allowPublicKeyRetrieval=" + allowPublicKeyRetrieval
                 + "&characterEncoding=UTF-8"
                 + "&connectionTimeZone=UTC"
                 + "&connectTimeout=" + config.connectionTimeoutMs()
-                + "&socketTimeout=30000";
+                + "&socketTimeout=" + config.socketTimeoutMs();
 
         Properties properties = new Properties();
         properties.setProperty("user", config.username() == null ? "" : config.username());
@@ -143,10 +152,18 @@ public final class MySqlStorage implements EconomyStorage {
      * Muss innerhalb von {@link #lock} aufgerufen werden.
      */
     private Connection connection() throws SQLException {
+        if (connection == null && retryAfterNanos != 0 && System.nanoTime() - retryAfterNanos < 0) {
+            throw new SQLException("MySQL vorübergehend nicht verfügbar; erneuter Verbindungsversuch folgt.");
+        }
         if (connection == null || connection.isClosed() || !connection.isValid(3)) {
             closeConnection();
-            connection = openConnection();
-            createTable(connection);
+            try {
+                connection = openConnection();
+                retryAfterNanos = 0;
+            } catch (SQLException exception) {
+                retryAfterNanos = System.nanoTime() + RETRY_DELAY_NANOS;
+                throw exception;
+            }
         }
         return connection;
     }
@@ -228,7 +245,14 @@ public final class MySqlStorage implements EconomyStorage {
 
     @Override
     public void saveAll(Collection<AccountData> accounts) {
-        if (accounts.isEmpty()) {
+        saveTransaction(accounts, List.of(), List.of());
+    }
+
+    @Override
+    public void saveTransaction(Collection<AccountData> accounts,
+                                Collection<LoanData> loanUpdates,
+                                Collection<UUID> deletedLoanIds) {
+        if (accounts.isEmpty() && loanUpdates.isEmpty() && deletedLoanIds.isEmpty()) {
             return;
         }
 
@@ -240,13 +264,37 @@ public final class MySqlStorage implements EconomyStorage {
                 autoCommit = current.getAutoCommit();
                 current.setAutoCommit(false);
 
-                try (PreparedStatement statement = current.prepareStatement(upsertSql)) {
-                    for (AccountData account : accounts) {
-                        bindUpsert(statement, account);
-                        statement.addBatch();
+                if (!accounts.isEmpty()) {
+                    try (PreparedStatement statement = current.prepareStatement(upsertSql)) {
+                        for (AccountData account : accounts) {
+                            bindUpsert(statement, account);
+                            statement.addBatch();
+                        }
+                        statement.executeBatch();
                     }
-                    statement.executeBatch();
                 }
+
+                if (!loanUpdates.isEmpty()) {
+                    try (PreparedStatement statement = current.prepareStatement(loanUpsertSql)) {
+                        for (LoanData loan : loanUpdates) {
+                            bindLoan(statement, loan);
+                            statement.addBatch();
+                        }
+                        statement.executeBatch();
+                    }
+                }
+
+                if (!deletedLoanIds.isEmpty()) {
+                    try (PreparedStatement statement = current.prepareStatement(
+                            "DELETE FROM `" + loanTable + "` WHERE `id` = ?")) {
+                        for (UUID id : deletedLoanIds) {
+                            statement.setString(1, id.toString());
+                            statement.addBatch();
+                        }
+                        statement.executeBatch();
+                    }
+                }
+
                 current.commit();
             } catch (SQLException exception) {
                 if (current != null) {
@@ -314,30 +362,35 @@ public final class MySqlStorage implements EconomyStorage {
     public void saveLoan(LoanData loan) {
         synchronized (lock) {
             try (PreparedStatement statement = connection().prepareStatement(loanUpsertSql)) {
-                statement.setString(1, loan.id().toString());
-                statement.setString(2, loan.owner().toString());
-                statement.setString(3, loan.ownerName());
-                statement.setBigDecimal(4, loan.principal());
-                statement.setBigDecimal(5, loan.interest());
-                statement.setBigDecimal(6, loan.principalRemaining());
-                statement.setBigDecimal(7, loan.interestRemaining());
-                statement.setInt(8, loan.days());
-                statement.setLong(9, loan.createdAt());
-                statement.setLong(10, loan.dueAt());
-                statement.setBoolean(11, loan.autoCollect());
-                statement.setString(12, loan.ownerName());
-                statement.setBigDecimal(13, loan.principal());
-                statement.setBigDecimal(14, loan.interest());
-                statement.setBigDecimal(15, loan.principalRemaining());
-                statement.setBigDecimal(16, loan.interestRemaining());
-                statement.setInt(17, loan.days());
-                statement.setLong(18, loan.dueAt());
-                statement.setBoolean(19, loan.autoCollect());
+                bindLoan(statement, loan);
                 statement.executeUpdate();
             } catch (SQLException exception) {
                 throw fail("speichern", exception);
             }
         }
+    }
+
+    private static void bindLoan(PreparedStatement statement, LoanData loan) throws SQLException {
+        statement.setString(1, loan.id().toString());
+        statement.setString(2, loan.owner().toString());
+        statement.setString(3, loan.ownerName());
+        statement.setBigDecimal(4, loan.principal());
+        statement.setBigDecimal(5, loan.interest());
+        statement.setBigDecimal(6, loan.principalRemaining());
+        statement.setBigDecimal(7, loan.interestRemaining());
+        statement.setInt(8, loan.days());
+        statement.setLong(9, loan.createdAt());
+        statement.setLong(10, loan.dueAt());
+        statement.setBoolean(11, loan.autoCollect());
+        // ON DUPLICATE KEY UPDATE
+        statement.setString(12, loan.ownerName());
+        statement.setBigDecimal(13, loan.principal());
+        statement.setBigDecimal(14, loan.interest());
+        statement.setBigDecimal(15, loan.principalRemaining());
+        statement.setBigDecimal(16, loan.interestRemaining());
+        statement.setInt(17, loan.days());
+        statement.setLong(18, loan.dueAt());
+        statement.setBoolean(19, loan.autoCollect());
     }
 
     @Override
@@ -354,8 +407,11 @@ public final class MySqlStorage implements EconomyStorage {
     }
 
     private StorageException fail(String action, SQLException exception) {
-        // Defekte Verbindung verwerfen, damit der nächste Aufruf neu verbindet.
+        // Bei Fehlern nicht für jeden Aufruf erneut eine Verbindung aufbauen.
         closeConnection();
+        if (retryAfterNanos == 0 || System.nanoTime() - retryAfterNanos >= 0) {
+            retryAfterNanos = System.nanoTime() + RETRY_DELAY_NANOS;
+        }
         return new StorageException("MySQL: Konto konnte nicht " + action
                 + " werden: " + exception.getMessage(), exception);
     }

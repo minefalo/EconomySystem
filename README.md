@@ -12,7 +12,12 @@ Admin-Befehlen.
 - **Geld ohne Rundungsfehler** – alle Beträge sind `BigDecimal`, mit
   konfigurierbaren Nachkommastellen und Rundungsmodus.
 - **Spieler-Befehle** – `/money` und `/pay`, inklusive Kontostand fremder
-  Spieler (berechtigungsabhängig).
+  Spieler (berechtigungsabhängig); Überweisungen nur an Online-Spieler.
+- **Bestenliste** – `/money top [Seite]` zeigt die reichsten Spieler mit
+  konfigurierbarer Seitengröße.
+- **Direktes Feedback** – Online-Spieler sehen nach jedem Zinszyklus ihre
+  persönliche Gutschrift und können sich beim Beitritt ihr Guthaben
+  anzeigen lassen.
 - **Admin-Befehle** – Geld hinzufügen, abziehen, setzen oder auf das
   Startguthaben zurücksetzen.
 - **Kreditsystem** – Kredite bis zum 3-fachen Eigenkapital, frei wählbare
@@ -70,7 +75,8 @@ Admin-Befehlen.
 | Befehl | Beschreibung |
 | --- | --- |
 | `/money [Spieler]` | Zeigt das eigene oder ein fremdes Guthaben. |
-| `/pay <Spieler> <Betrag>` | Überweist Geld an einen anderen Spieler. |
+| `/money top [Seite]` | Zeigt die Spieler mit dem höchsten Guthaben. |
+| `/pay <Spieler> <Betrag>` | Überweist Geld an einen online befindlichen Spieler. |
 | `/kredit add <Betrag> <Tage>` | Nimmt einen Kredit auf. |
 | `/kredit bezahlen [Betrag]` | Zahlt offene Kredite zurück (ohne Betrag: so viel wie möglich). |
 | `/kredit info` | Zeigt Guthaben, Kreditrahmen und laufende Kredite. |
@@ -109,6 +115,7 @@ Die Aliase stehen in `commands.yml` und können dort erweitert werden:
 | --- | --- | --- |
 | `economysystem.balance` | alle | Eigenes Guthaben anzeigen. |
 | `economysystem.balance.others` | OP | Guthaben anderer Spieler anzeigen. |
+| `economysystem.balance.top` | alle | Bestenliste über `/money top` anzeigen. |
 | `economysystem.pay` | alle | Geld überweisen. |
 | `economysystem.kredit` | alle | Kreditsystem nutzen (`/kredit`). |
 | `economysystem.gui` | alle | Wirtschafts-Menü öffnen (`/economysystem-gui`). |
@@ -184,6 +191,7 @@ interest:
   enabled: true
   start-time: "00:01"            # erster Lauf (Serverzeit)
   interval-minutes: 1440         # 1440 = täglich
+  notify-players: true           # persönliche Gutschrift im Chat
   factors:
     spar: "1.3"                  # Sparzins
     kredit: "1.3"                # a der Kreditformel
@@ -197,11 +205,74 @@ credits:
   min-days: 1
   max-days: 365
   check-interval-seconds: 60     # Prüfung fälliger Kredite
+  date-format: "dd.MM.yyyy HH:mm"
+
+leaderboard:
+  page-size: 10                  # Einträge pro Seite bei /money top
+  max-entries: 100               # maximal geladene Einträge
+
+notifications:
+  balance-on-join: true
+  balance-on-join-delay-ticks: 20
+
+suggestions:
+  amounts: ["1", "10", "100", "1000", "10000"]
+  credit-amounts: ["100", "500", "1000", "5000"]
+  repay-amounts: ["10", "50", "100", "500"]
+  credit-days: ["7", "30", "90"]
 
 storage:
   type: YAML                     # YAML oder MYSQL
   save-interval-seconds: 300
 ```
+
+### Speicherkonsistenz
+
+Konto- und Kreditänderungen, die zusammengehören (Kreditaufnahme,
+Rückzahlung, automatische Tilgung), werden gemeinsam gespeichert:
+
+- **MySQL:** Kontostand, Kredit und Löschungen laufen in einer Transaktion
+  inklusive Rollback.
+- **YAML:** Vor dem Schreiben entsteht `pending-transaction.yml` mit den
+  vollständigen Zielwerten. Bricht der Server dazwischen ab, zieht das
+  Plugin das Journal beim nächsten Start nach. Die Einträge sind absolut
+  und können gefahrlos wiederholt angewendet werden.
+
+Auszahlung und Kredit bzw. Abbuchung und Tilgung landen dadurch gemeinsam
+in der Datenbank bzw. den YAML-Dateien. Fehler beim Schreiben werden
+weiterhin protokolliert; bei einem dauerhaft nicht erreichbaren Speicher
+kann der Server nur den zuletzt erfolgreich gespeicherten Stand laden.
+
+### MySQL-Sicherheit
+
+Verwende einen eigenen Datenbanknutzer statt `root`. Für die automatische
+Tabellenerstellung benötigt er `CREATE`, im Betrieb `SELECT`, `INSERT`,
+`UPDATE` und `DELETE` für die Plugin-Tabellen. Das Passwort steht
+unverschlüsselt in `settings.yml`: Beschränke den Dateizugriff auf den
+Serverprozess und Administratoren.
+
+`storage.mysql.ssl-mode` legt den TLS-Modus fest:
+
+| Wert | Bedeutung |
+| --- | --- |
+| `VERIFY_IDENTITY` | TLS mit Prüfung von Zertifikat und Hostname (Standard) |
+| `VERIFY_CA` | TLS mit Prüfung des Zertifikats, ohne Hostname |
+| `REQUIRED` | TLS ohne Zertifikatsprüfung |
+| `PREFERRED` | TLS, falls der Server es anbietet, sonst Klartext |
+| `DISABLED` | Kein TLS |
+
+Ist der Wert leer, gilt weiterhin `use-ssl` (`true` → `VERIFY_IDENTITY`,
+`false` → `DISABLED`), damit bestehende Konfigurationen unverändert
+funktionieren. Bei `DISABLED` und `PREFERRED` erlaubt der Treiber den
+Abruf des öffentlichen Serverschlüssels, damit `caching_sha2_password`
+(MySQL 8) auch ohne TLS funktioniert; bei den übrigen Modi bleibt er
+verboten.
+
+`VERIFY_IDENTITY` verlangt ein vertrauenswürdiges Zertifikat, dessen Name
+zum konfigurierten Host passt. Schlägt der Start deshalb fehl, nennt die
+Fehlermeldung diesen Hinweis; alternativ `ssl-mode` auf `REQUIRED` setzen
+(verschlüsselt, aber ohne Zertifikatsprüfung) oder ein passendes
+Zertifikat hinterlegen.
 
 ### Zinsformel
 
@@ -238,12 +309,16 @@ tests:
   damit vergangene Zyklen.
 - Jeder Lauf baut auf dem Guthaben des vorherigen auf, das Wachstum
   entspricht also mehreren echten Zyklen.
-- Verwendet immer den aktuellen Sparzins-Faktor, auch wenn der automatische
-  Zyklus (`interest.enabled`) deaktiviert ist.
+- Verwendet den aktuellen Sparzins-Faktor und ist nur verfügbar, wenn
+  `interest.enabled` aktiviert ist.
 - **Verändert echte Kontostände.** Nur auf Test-/Entwicklungsservern
   aktivieren; zusätzlich ist die Permission `economysystem.tests` nötig.
 - Ist `tests.enabled` auf `false`, antwortet der Befehl nur mit einem
   Hinweis und ändert nichts.
+- Produktionsartefakte enthalten die Testbefehle gar nicht erst:
+  `mvn -Pproduction clean package` schließt die Implementierung aus. Der
+  Befehl antwortet dann unabhängig von `tests.enabled` mit dem Hinweis,
+  dass die Testbefehle deaktiviert sind.
 
 ### Kreditsystem
 
@@ -335,6 +410,9 @@ menus:
   Stern in der unteren Reihe und ist nur mit `economysystem.admin` sichtbar.
 - `settings.default-menu` legt das Menü ohne Argument fest,
   `settings.close-on-click` schließt das Inventar vor dem Ausführen.
+- `settings.click-cooldown-ms` drosselt nur wiederholte Klicks auf
+  **dasselbe** Item; andere Menüpunkte bleiben sofort bedienbar
+  (`0` deaktiviert den Filter).
 - `/economysystem-admin reload` lädt auch die `gui.yml` neu.
 
 #### Eingaben ohne Chat
@@ -421,8 +499,9 @@ src/main/java/de/Minefalo/economySystem/
 ## Entwicklung
 
 ```bash
-mvn clean package     # JAR bauen
-mvn test              # Tests ausführen
+mvn clean package               # JAR inklusive Test-Befehlen (Entwicklung)
+mvn -Pproduction clean package  # Produktions-JAR ohne Test-Befehle
+mvn test                        # Tests ausführen
 ```
 
 Der GitHub-Actions-Workflow `.github/workflows/build.yml` baut das Projekt

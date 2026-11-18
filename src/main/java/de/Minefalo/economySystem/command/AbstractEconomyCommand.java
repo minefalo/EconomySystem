@@ -6,6 +6,8 @@ import de.Minefalo.economySystem.currency.Currency;
 import de.Minefalo.economySystem.economy.Account;
 import de.Minefalo.economySystem.economy.EconomyService;
 import de.Minefalo.economySystem.storage.StorageException;
+import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -16,6 +18,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Gemeinsame Basis für alle Economy-Befehle. Kapselt Fehlerbehandlung
@@ -37,14 +40,52 @@ public abstract class AbstractEconomyCommand implements CommandExecutor, TabComp
         if (!plugin.isEnabled()) {
             return true;
         }
-        try {
-            return execute(sender, label, args);
-        } catch (StorageException exception) {
-            plugin.getLogger().severe("Zugriff auf den Economy-Speicher fehlgeschlagen: "
-                    + exception.getMessage());
-            messages().send(sender, "storage-error");
-            return true;
+        CompletableFuture<?> preparation = CompletableFuture.completedFuture(null);
+        if (sender instanceof Player player
+                && ((this instanceof MoneyCommand && args.length == 0 && sender.hasPermission("economysystem.balance"))
+                    || (this instanceof PayCommand && sender.hasPermission("economysystem.pay"))
+                    || (this instanceof KreditCommand && sender.hasPermission("economysystem.kredit")))) {
+            preparation = economy.accountAsync(player.getUniqueId(), player.getName());
         }
+
+        String target = null;
+        if (this instanceof PayCommand && sender instanceof Player && sender.hasPermission("economysystem.pay")
+                && args.length == 2 && Bukkit.getPlayerExact(args[0]) != null) {
+            target = args[0];
+        } else if (this instanceof MoneyCommand && sender.hasPermission("economysystem.balance.others")
+                && args.length == 1 && !args[0].equalsIgnoreCase("help")) {
+            target = args[0];
+        } else if (this instanceof EconomySystemAdminCommand && sender.hasPermission("economysystem.admin")
+                && args.length >= 3 && (args[0].equalsIgnoreCase("money") || args[0].equalsIgnoreCase("geld"))) {
+            target = args[1];
+        }
+        if (target != null) {
+            CompletableFuture<?> lookup = economy.findAsync(target);
+            preparation = CompletableFuture.allOf(preparation, lookup);
+        }
+        preparation.whenComplete((ignored, error) -> {
+            if (!plugin.isEnabled()) {
+                return;
+            }
+            plugin.getServer().getScheduler().runTask(plugin, () -> {
+                if (sender instanceof Player player && !player.isOnline()) {
+                    return;
+                }
+                if (error != null) {
+                    plugin.getLogger().warning("Konto konnte nicht geladen werden: " + error.getMessage());
+                    messages().send(sender, "storage-error");
+                    return;
+                }
+                try {
+                    execute(sender, label, args);
+                } catch (StorageException exception) {
+                    plugin.getLogger().severe("Zugriff auf den Economy-Speicher fehlgeschlagen: "
+                            + exception.getMessage());
+                    messages().send(sender, "storage-error");
+                }
+            });
+        });
+        return true;
     }
 
     protected abstract boolean execute(CommandSender sender, String label, String[] args);
