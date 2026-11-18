@@ -32,6 +32,9 @@ commands:
   economysystem-admin:
     description: Admin-Befehl für Geldverwaltung, Zinsen, Informationen, Reload und Tests.
     usage: /economysystem-admin <help|info|reload|money|zinsen|tests>
+  economysystem-gui:
+    description: Öffnet das klickbare Wirtschafts-Menü.
+    usage: /economysystem-gui [Menü]
 
 permissions:
   economysystem.balance:
@@ -45,6 +48,9 @@ permissions:
     default: true
   economysystem.kredit:
     description: Erlaubt die Nutzung des Kreditsystems (/kredit).
+    default: true
+  economysystem.gui:
+    description: Erlaubt das Öffnen des Wirtschafts-Menüs (/economysystem-gui).
     default: true
   economysystem.admin:
     description: Erlaubt die Admin-Befehle (Geldverwaltung, Zinsen, Info).

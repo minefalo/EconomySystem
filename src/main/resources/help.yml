@@ -43,6 +43,22 @@ pages:
       - "&e/economysystem-admin tests zins-zyklus add <Anzahl>"
       - "&8  » &7Führt Zinszyklen sofort aus (nur mit tests.enabled)."
 
+  - title: "Menü"
+    lines:
+      - "&e/economysystem-gui [Menü]"
+      - "&8  » &7Öffnet das klickbare Wirtschafts-Menü."
+      - "&8  » &7Aliase: &e/eco-gui &7und &e/egui&7."
+      - ""
+      - "&7Jedes Item wird nur angezeigt, wenn du die passende"
+      - "&7Permission besitzt. Beim Klick wird der Befehl"
+      - "&7so ausgeführt, als hättest du ihn selbst eingegeben."
+      - "&7Befehle mit Argumenten fragen die Werte im Chat ab"
+      - "&8  » &7Abbrechen mit &ecancel&7."
+      - ""
+      - "&7Admins erreichen das Admin-Menü über den &eStern"
+      - "&7in der unteren Reihe (Permission &eeconomysystem.admin&7)."
+      - "&7Alle Items und Befehle stehen in der &egui.yml&7."
+
   - title: "Geldverwaltung"
     lines:
       - "&e/economysystem-admin money <Spieler> add <Betrag>"

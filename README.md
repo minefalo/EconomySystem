@@ -4,7 +4,8 @@
 [![Lizenz: MIT](https://img.shields.io/badge/Lizenz-MIT-blue.svg)](LICENSE)
 
 BigDecimal-basiertes Wirtschaftssystem für Paper-Server mit YAML- oder
-MySQL-Speicher, konfigurierbarem Zinszyklus und Admin-Befehlen.
+MySQL-Speicher, konfigurierbarem Zinszyklus, Kreditsystem, GUI-Menüs und
+Admin-Befehlen.
 
 ## Funktionen
 
@@ -17,6 +18,9 @@ MySQL-Speicher, konfigurierbarem Zinszyklus und Admin-Befehlen.
 - **Kreditsystem** – Kredite bis zum 3-fachen Eigenkapital, frei wählbare
   Laufzeit, Zinsen nach `y = x · m + a` und automatische Tilgung bei
   Fälligkeit.
+- **GUI-Menüs** – `/economysystem-gui` öffnet ein klickbares Menü. Items
+  erscheinen nur mit passender Permission und führen Befehle als Spieler
+  aus; Admins erreichen über den Stern ein eigenes Admin-Menü.
 - **Zinszyklus** – nach der Blockcraft-Wirtschaftsformel `y = a · √x` für
   **alle gespeicherten Konten**, auch offline. Zeitpunkt und Intervall sind
   konfigurierbar (Standard: täglich um 00:01 Uhr).
@@ -52,7 +56,8 @@ MySQL-Speicher, konfigurierbarem Zinszyklus und Admin-Befehlen.
 2. Die erzeugte Datei `target/economysystem-0.1.jar` in den
    `plugins/`-Ordner des Servers kopieren.
 3. Server starten – im Plugin-Ordner `plugins/EconomySystem/` werden
-   `settings.yml`, `messages.yml`, `commands.yml` und `help.yml` angelegt.
+   `settings.yml`, `messages.yml`, `commands.yml`, `help.yml` und `gui.yml`
+   angelegt.
 4. Anpassen und mit `/economysystem-admin reload` neu laden.
 
 ## Befehle
@@ -64,6 +69,7 @@ MySQL-Speicher, konfigurierbarem Zinszyklus und Admin-Befehlen.
 | `/kredit add <Betrag> <Tage>` | Nimmt einen Kredit auf. |
 | `/kredit bezahlen [Betrag]` | Zahlt offene Kredite zurück (ohne Betrag: so viel wie möglich). |
 | `/kredit info` | Zeigt Guthaben, Kreditrahmen und laufende Kredite. |
+| `/economysystem-gui [Menü]` | Öffnet das klickbare Wirtschafts-Menü (Aliase `/eco-gui`, `/egui`). |
 | `/economysystem help` | Zeigt die allgemeine Hilfe. |
 | `/economysystem-admin help [Seite]` | Zeigt die mehrseitige Admin-Hilfe. |
 | `/economysystem-admin info` | Zeigt Speicher, Währung, Zinsen und Zyklus. |
@@ -90,6 +96,7 @@ Die Aliase stehen in `commands.yml` und können dort erweitert werden:
 | `kredit` | `credit`, `darlehen` |
 | `economysystem` | `es`, `ecoadmin` |
 | `economysystem-admin` | `esa`, `ecoadm` |
+| `economysystem-gui` | `eco-gui`, `egui` |
 
 ## Berechtigungen
 
@@ -99,6 +106,7 @@ Die Aliase stehen in `commands.yml` und können dort erweitert werden:
 | `economysystem.balance.others` | OP | Guthaben anderer Spieler anzeigen. |
 | `economysystem.pay` | alle | Geld überweisen. |
 | `economysystem.kredit` | alle | Kreditsystem nutzen (`/kredit`). |
+| `economysystem.gui` | alle | Wirtschafts-Menü öffnen (`/economysystem-gui`). |
 | `economysystem.admin` | OP | Admin-Befehle: Geldverwaltung, Zinsen, Info. |
 | `economysystem.reload` | OP | Zusätzlich zu `economysystem.admin` das Neuladen über `/economysystem-admin reload`. |
 | `economysystem.tests` | OP | Zusätzlich zu `economysystem.admin` die Test-Befehle (nur mit `tests.enabled`). |
@@ -277,11 +285,56 @@ y = x · m + a
 Kredite werden persistent gespeichert – im YAML-Modus in `loans.yml`, im
 MySQL-Modus in der Tabelle `<table-prefix>loans`.
 
+### GUI-Menü
+
+`/economysystem-gui` (Aliase `/eco-gui`, `/egui`) öffnet ein klickbares
+Menü. Items, Slots, Materialien, Permissions und Befehle stehen in der
+`gui.yml`.
+
+```yaml
+menus:
+  main:
+    title: "&8&lWirtschaft"
+    rows: 6
+    items:
+      pay:
+        slot: 14
+        material: EMERALD
+        name: "&a&lGeld überweisen"
+        permission: "economysystem.pay"
+        prompts:
+          - "&7Spieler:"
+          - "&7Betrag:"
+        commands:
+          - "pay {input1} {input2}"
+      admin:
+        slot: 49
+        material: NETHER_STAR
+        name: "&c&lAdmin-Menü"
+        permission: "economysystem.admin"
+        open: "admin"
+```
+
+- Ein Item wird **nur angezeigt**, wenn der Spieler die angegebene
+  `permission` besitzt.
+- Beim Klick wird der Befehl **als Spieler** ausgeführt (z. B. `/money`,
+  `/pay`, `/kredit`); alle normalen Prüfungen und Permissions greifen
+  weiterhin.
+- Befehle mit Argumenten fragen die Werte über `prompts` im Chat ab:
+  `{input1}`, `{input2}` usw., `{input}` für alle Antworten und `{player}`
+  für den Spielernamen. Abbrechen mit `cancel`.
+- `open` öffnet statt Befehlen ein Untermenü. Das Admin-Menü hängt am
+  Stern in der unteren Reihe und ist nur mit `economysystem.admin` sichtbar.
+- `settings.default-menu` legt das Menü ohne Argument fest,
+  `settings.close-on-click` schließt das Inventar vor dem Ausführen.
+- `/economysystem-admin reload` lädt auch die `gui.yml` neu.
+
 Weitere Dateien:
 
 - `messages.yml` – alle Nachrichten, Farben (`&`-Codes und `&#RRGGBB`).
 - `help.yml` – Seiten der Admin-Hilfe inklusive klickbarer Navigation.
 - `commands.yml` – Aliase für alle Befehle.
+- `gui.yml` – Items, Slots und Befehle der Klick-Menüs.
 - `loans.yml` – gespeicherte Kredite (nur im YAML-Modus).
 
 ## Projektstruktur
@@ -293,6 +346,7 @@ src/main/java/de/Minefalo/economySystem/
 ├── credit/       Kredite, Zinsformel und automatische Tilgung
 ├── currency/     BigDecimal-Währung (Parsen, Formatieren, Runden)
 ├── economy/      Konten, Service, Zinsberechnung und -scheduler
+├── gui/          Konfigurierbare Klick-Menüs und Chat-Abfragen
 ├── help/         Mehrseitige Hilfe
 ├── listener/     Join-Handling
 ├── placeholder/  PlaceholderAPI-Erweiterungen

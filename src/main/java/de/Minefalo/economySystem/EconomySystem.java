@@ -3,6 +3,7 @@ package de.Minefalo.economySystem;
 import de.Minefalo.economySystem.command.CommandRegistry;
 import de.Minefalo.economySystem.command.EconomySystemAdminCommand;
 import de.Minefalo.economySystem.command.EconomySystemCommand;
+import de.Minefalo.economySystem.command.EconomySystemGuiCommand;
 import de.Minefalo.economySystem.command.KreditCommand;
 import de.Minefalo.economySystem.command.MoneyCommand;
 import de.Minefalo.economySystem.command.PayCommand;
@@ -13,6 +14,7 @@ import de.Minefalo.economySystem.config.StorageType;
 import de.Minefalo.economySystem.credit.CreditService;
 import de.Minefalo.economySystem.economy.EconomyService;
 import de.Minefalo.economySystem.economy.InterestScheduler;
+import de.Minefalo.economySystem.gui.GuiManager;
 import de.Minefalo.economySystem.help.HelpBook;
 import de.Minefalo.economySystem.listener.PlayerConnectionListener;
 import de.Minefalo.economySystem.placeholder.PlaceholderHook;
@@ -27,6 +29,7 @@ public final class EconomySystem extends JavaPlugin {
     private Messages messages;
     private CommandsConfig commandsConfig;
     private HelpBook helpBook;
+    private GuiManager guiManager;
     private EconomyStorage storage;
     private EconomyService economy;
     private CreditService creditService;
@@ -47,6 +50,7 @@ public final class EconomySystem extends JavaPlugin {
         messages = new Messages(this);
         commandsConfig = new CommandsConfig(this);
         helpBook = new HelpBook(this);
+        guiManager = new GuiManager(this);
 
         try {
             storage = StorageFactory.create(this, settings);
@@ -85,6 +89,7 @@ public final class EconomySystem extends JavaPlugin {
         economy.setIncomeHandler(creditService::handleIncome);
 
         getServer().getPluginManager().registerEvents(new PlayerConnectionListener(economy), this);
+        getServer().getPluginManager().registerEvents(guiManager, this);
 
         if (!registerCommands()) {
             getLogger().severe("Die Befehle konnten nicht registriert werden. Prüfe die plugin.yml.");
@@ -125,12 +130,14 @@ public final class EconomySystem extends JavaPlugin {
         EconomySystemCommand systemCommand = new EconomySystemCommand(this, economy);
         EconomySystemAdminCommand adminCommand = new EconomySystemAdminCommand(this, economy, helpBook);
         KreditCommand kreditCommand = new KreditCommand(this, economy, creditService);
+        EconomySystemGuiCommand guiCommand = new EconomySystemGuiCommand(this, economy, guiManager);
 
         boolean registered = commandRegistry.register("money", moneyCommand, moneyCommand)
                 && commandRegistry.register("pay", payCommand, payCommand)
                 && commandRegistry.register("kredit", kreditCommand, kreditCommand)
                 && commandRegistry.register("economysystem", systemCommand, systemCommand)
-                && commandRegistry.register("economysystem-admin", adminCommand, adminCommand);
+                && commandRegistry.register("economysystem-admin", adminCommand, adminCommand)
+                && commandRegistry.register("economysystem-gui", guiCommand, guiCommand);
         if (!registered) {
             return false;
         }
@@ -152,6 +159,10 @@ public final class EconomySystem extends JavaPlugin {
         if (creditService != null) {
             creditService.stop();
             creditService = null;
+        }
+        if (guiManager != null) {
+            guiManager.stop();
+            guiManager = null;
         }
         if (commandRegistry != null) {
             commandRegistry.unregisterAliases();
@@ -175,6 +186,9 @@ public final class EconomySystem extends JavaPlugin {
         settings.reload();
         messages.reload();
         helpBook.reload();
+        if (guiManager != null) {
+            guiManager.reload();
+        }
         if (commandRegistry != null) {
             commandRegistry.reload();
         }

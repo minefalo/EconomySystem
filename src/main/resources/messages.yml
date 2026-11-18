@@ -28,7 +28,7 @@ balance-given: "&aDu hast &e%player% &6%amount% &agegeben. Neues Guthaben: &6%ba
 balance-taken: "&aDu hast &e%player% &6%amount% &aabgezogen. Neues Guthaben: &6%balance%"
 balance-set: "&aDas Guthaben von &e%player% &awurde auf &6%balance% &agesetzt."
 
-reload-success: "&aEinstellungen, Nachrichten, Hilfe und Befehle wurden neu geladen."
+reload-success: "&aEinstellungen, Nachrichten, Menü, Hilfe und Befehle wurden neu geladen."
 
 tests-disabled: "&cDie Test-Befehle sind deaktiviert. Setze in der settings.yml &etests.enabled: true&c und lade mit &e/economysystem-admin reload&c neu."
 tests-cycles-invalid: "&cDie Anzahl muss eine ganze Zahl zwischen 1 und %max% sein."
@@ -42,6 +42,7 @@ usage-kredit: "&cVerwendung: &e/kredit <add <Betrag> <Tage>|bezahlen [Betrag]|in
 usage-kredit-add: "&cVerwendung: &e/kredit add <Betrag> <Tage>"
 usage-kredit-pay: "&cVerwendung: &e/kredit bezahlen [Betrag]"
 usage-economysystem: "&cVerwendung: &e/economysystem help"
+usage-gui: "&cVerwendung: &e/economysystem-gui [Menü]"
 usage-admin: "&cVerwendung: &e/economysystem-admin <help|info|reload|money|zinsen|tests>"
 usage-admin-money: "&cVerwendung: &e/economysystem-admin money <Spieler> <add|remove|set> <Betrag>"
 usage-admin-zinsen: "&cVerwendung: &e/economysystem-admin zinsen <spar|kredit> set <Faktor>"
@@ -54,6 +55,10 @@ help-empty: "&cEs sind keine Hilfe-Seiten in der help.yml konfiguriert."
 unlimited: "unbegrenzt"
 disabled: "deaktiviert"
 enabled: "aktiviert"
+
+gui-disabled: "&cDas Wirtschafts-Menü ist derzeit deaktiviert."
+gui-not-found: "&cDas Menü &e%menu% &cexistiert nicht."
+gui-input-cancelled: "&7Eingabe abgebrochen."
 
 credit-disabled: "&cDas Kreditsystem ist derzeit deaktiviert."
 credit-invalid-days: "&cDie Laufzeit muss eine ganze Zahl zwischen %min% und %max% Tagen sein."
@@ -88,6 +93,7 @@ help:
   - "&e/kredit add <Betrag> <Tage> &7- Nimmt einen Kredit auf"
   - "&e/kredit bezahlen [Betrag] &7- Zahlt deinen Kredit zurück"
   - "&e/kredit info &7- Zeigt Guthaben, Rahmen und laufende Kredite"
+  - "&e/economysystem-gui &7- Öffnet das klickbare Wirtschafts-Menü"
 
 help-admin:
   - "&6&lEconomySystem"
@@ -95,6 +101,7 @@ help-admin:
   - "&e/economysystem-admin help &7- Zeigt die Admin-Hilfe (mehrere Seiten)"
   - "&e/economysystem-admin info &7- Zeigt Informationen zum System"
   - "&e/economysystem-admin reload &7- Lädt alle Konfigurationen neu"
+  - "&e/economysystem-gui admin &7- Öffnet das Admin-Menü"
   - "&e/economysystem-admin tests zins-zyklus add <Anzahl> &7- Simuliert Zinszyklen (nur mit tests.enabled)"
 
 info:

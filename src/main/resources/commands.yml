@@ -3,7 +3,8 @@
 # ==========================================================
 # Hier können für alle Befehle zusätzliche Aliase registriert werden.
 # Die eigentlichen Befehlsnamen (money, pay, kredit, economysystem,
-# economysystem-admin) stehen in der plugin.yml und bleiben immer erhalten.
+# economysystem-admin, economysystem-gui) stehen in der plugin.yml und
+# bleiben immer erhalten.
 #
 # Regeln für Aliase:
 #   - nur a-z, 0-9, _ und - (maximal 32 Zeichen)
@@ -37,3 +38,8 @@ commands:
     aliases:
       - esa
       - ecoadm
+
+  economysystem-gui:
+    aliases:
+      - eco-gui
+      - egui
