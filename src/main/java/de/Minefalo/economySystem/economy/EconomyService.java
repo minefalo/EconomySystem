@@ -207,6 +207,38 @@ public final class EconomyService {
         return future;
     }
 
+    /**
+     * Liefert alle bekannten Konten (Cache und Speicher) asynchron,
+     * zum Beispiel für die Spielerauswahl im GUI.
+     */
+    public CompletableFuture<List<AccountData>> accountsAsync() {
+        CompletableFuture<List<AccountData>> future = new CompletableFuture<>();
+        if (executor.isShutdown()) {
+            future.complete(List.of());
+            return future;
+        }
+
+        try {
+            executor.execute(() -> {
+                try {
+                    Map<UUID, AccountData> balances = new LinkedHashMap<>();
+                    for (AccountData data : storage.loadAll()) {
+                        balances.put(data.uniqueId(), data);
+                    }
+                    for (Account account : accounts.values()) {
+                        balances.put(account.uniqueId(), account.snapshot());
+                    }
+                    future.complete(List.copyOf(balances.values()));
+                } catch (Throwable throwable) {
+                    future.completeExceptionally(throwable);
+                }
+            });
+        } catch (RuntimeException exception) {
+            future.completeExceptionally(exception);
+        }
+        return future;
+    }
+
     private Optional<Account> accountByName(String name) {
         return accounts.values().stream()
                 .filter(account -> account.name().equalsIgnoreCase(name))

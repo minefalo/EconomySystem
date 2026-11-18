@@ -48,10 +48,7 @@ public final class Settings {
     }
 
     public void reload() {
-        if (!file.exists()) {
-            plugin.saveResource("settings.yml", false);
-        }
-
+        ConfigUpdater.update(plugin, "settings.yml");
         config = YamlConfiguration.loadConfiguration(file);
         YamlConfiguration defaults = loadDefaults();
         if (defaults != null) {

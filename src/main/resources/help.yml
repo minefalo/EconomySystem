@@ -13,6 +13,8 @@
 # Farben: &0-&f, &l, &o, &n, &m, &k, &r, Hex: &#RRGGBB
 # ==========================================================
 
+config-version: 1
+
 title: "&8&m          &r &6&lEconomySystem &7- Admin &r&8&m          "
 page-title: "&e&l%title% &8(&7Seite %page%/%pages%&8)"
 page-indicator: "&7Seite &e%page% &7von &e%pages%"
@@ -52,8 +54,11 @@ pages:
       - "&7Jedes Item wird nur angezeigt, wenn du die passende"
       - "&7Permission besitzt. Beim Klick wird der Befehl"
       - "&7so ausgeführt, als hättest du ihn selbst eingegeben."
-      - "&7Befehle mit Argumenten fragen die Werte im Chat ab"
-      - "&8  » &7Abbrechen mit &ecancel&7."
+      - "&7Befehle mit Argumenten öffnen passende Eingaben:"
+      - "&8  » &7Ganze Zahlen: Regler aus Glasscheiben."
+      - "&8  » &7Texte: Nametag im Amboss benennen."
+      - "&8  » &7Spieler: Kopfauswahl mit Suche, Filter und Sortierung."
+      - "&7Der Chat wird dafür nicht mehr benötigt."
       - ""
       - "&7Admins erreichen das Admin-Menü über den &eStern"
       - "&7in der unteren Reihe (Permission &eeconomysystem.admin&7)."

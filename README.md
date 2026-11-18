@@ -20,7 +20,9 @@ Admin-Befehlen.
   Fälligkeit.
 - **GUI-Menüs** – `/economysystem-gui` öffnet ein klickbares Menü. Items
   erscheinen nur mit passender Permission und führen Befehle als Spieler
-  aus; Admins erreichen über den Stern ein eigenes Admin-Menü.
+  aus; Admins erreichen über den Stern ein eigenes Admin-Menü. Argumente
+  werden ohne Chat abgefragt: ganze Zahlen per Regler aus Glasscheiben,
+  Texte per Amboss-Nametag, Spieler über eine durchsuchbare Kopfauswahl.
 - **Zinszyklus** – nach der Blockcraft-Wirtschaftsformel `y = a · √x` für
   **alle gespeicherten Konten**, auch offline. Zeitpunkt und Intervall sind
   konfigurierbar (Standard: täglich um 00:01 Uhr).
@@ -29,6 +31,9 @@ Admin-Befehlen.
   angelegt).
 - **Konfiguration mit Kommentaren** – Änderungen an Zinsfaktoren werden
   zeilenweise geschrieben, bestehende Kommentare bleiben erhalten.
+- **Automatische Config-Updates** – jede YAML-Datei trägt eine
+  `config-version`; fehlende Schlüssel und Kommentare werden beim Start
+  ergänzt, eigene Werte bleiben unangetastet.
 - **Mehrseitige Hilfe** – `/economysystem-admin help` liest `help.yml` und
   blättert per Klick im Chat.
 - **PlaceholderAPI** – optional: Guthaben, Top-Liste und aktueller Sparzins
@@ -288,8 +293,8 @@ MySQL-Modus in der Tabelle `<table-prefix>loans`.
 ### GUI-Menü
 
 `/economysystem-gui` (Aliase `/eco-gui`, `/egui`) öffnet ein klickbares
-Menü. Items, Slots, Materialien, Permissions und Befehle stehen in der
-`gui.yml`.
+Menü. Items, Slots, Materialien, Permissions, Eingaben und Befehle stehen
+in der `gui.yml`.
 
 ```yaml
 menus:
@@ -302,9 +307,15 @@ menus:
         material: EMERALD
         name: "&a&lGeld überweisen"
         permission: "economysystem.pay"
-        prompts:
-          - "&7Spieler:"
-          - "&7Betrag:"
+        inputs:
+          - type: player
+            prompt: "&8Spieler wählen"
+          - type: number
+            prompt: "&8Betrag"
+            min: 1
+            max: 1000000
+            step: 10
+            default: 100
         commands:
           - "pay {input1} {input2}"
       admin:
@@ -320,21 +331,74 @@ menus:
 - Beim Klick wird der Befehl **als Spieler** ausgeführt (z. B. `/money`,
   `/pay`, `/kredit`); alle normalen Prüfungen und Permissions greifen
   weiterhin.
-- Befehle mit Argumenten fragen die Werte über `prompts` im Chat ab:
-  `{input1}`, `{input2}` usw., `{input}` für alle Antworten und `{player}`
-  für den Spielernamen. Abbrechen mit `cancel`.
 - `open` öffnet statt Befehlen ein Untermenü. Das Admin-Menü hängt am
   Stern in der unteren Reihe und ist nur mit `economysystem.admin` sichtbar.
 - `settings.default-menu` legt das Menü ohne Argument fest,
   `settings.close-on-click` schließt das Inventar vor dem Ausführen.
 - `/economysystem-admin reload` lädt auch die `gui.yml` neu.
 
+#### Eingaben ohne Chat
+
+Argumente werden nicht mehr im Chat abgefragt, sondern über eigene
+Inventare. Jeder Eintrag unter `inputs` hat einen `type` und einen
+`prompt` (Titel des Inventars):
+
+| `type`   | Bedienung |
+| -------- | --------- |
+| `number` | **Regler** aus Glasscheiben: neun Scheiben als Schiene (Klick springt direkt auf den Wert), zusätzlich `-10×` / `-1×` / `+1×` / `+10×` der Schrittweite sowie Übernehmen, Zurücksetzen und Abbrechen. |
+| `text`   | **Amboss**: Nametag im linken Feld benennen und auf das Ergebnis klicken. |
+| `player` | **Kopfauswahl**: 36 Spielerköpfe pro Seite, Suche über einen Amboss, Filter (alle / nur online) und Sortierung (Name A–Z, Name Z–A, Guthaben auf- oder absteigend) sowie Seiten blättern. |
+
+```yaml
+inputs:
+  - type: number          # ganze Zahl
+    prompt: "&8Betrag"
+    min: 1                # kleinster Wert
+    max: 1000000          # größter Wert
+    step: 10              # Schrittweite der Buttons und der Schiene
+    default: 100          # Startwert
+  - type: text
+    prompt: "&8Neuer Faktor"
+  - type: player
+    prompt: "&8Spieler wählen"
+    filter: all           # all | online
+    sort: name-asc        # name-asc | name-desc | balance-desc | balance-asc
+```
+
+- Die Antworten ersetzen in `commands` die Platzhalter `{input1}`,
+  `{input2}` usw.; `{input}` enthält alle Antworten mit Leerzeichen
+  verbunden, `{player}` den Namen des klickenden Spielers.
+- Abbrechen ist jederzeit über die Schaltfläche bzw. `ESC` möglich; danach
+  öffnet sich das vorherige Menü wieder.
+- Ältere Dateien mit `prompts` funktionieren weiter: jeder Eintrag wird als
+  Text-Eingabe (Amboss) gelesen.
+
+### Konfigurationsversion
+
+Alle ausgelieferten YAML-Dateien tragen eine `config-version`
+(`plugin.yml` ausgenommen). Beim Start und bei
+`/economysystem-admin reload` vergleicht das Plugin die Version der
+vorhandenen Datei mit der Version der mitgelieferten Standarddatei:
+
+- Fehlt eine Datei, wird sie aus dem JAR angelegt.
+- Ist die vorhandene Datei **älter**, werden alle fehlenden Schlüssel samt
+  ihren Kommentaren ergänzt. **Vorhandene Werte und Kommentare werden nie
+  überschrieben.**
+- Anschließend wird die Datei einmalig neu geschrieben (Anführungszeichen
+  und Listenformat können sich dadurch leicht ändern) und die neue
+  `config-version` direkt unter dem Kopfkommentar eingetragen.
+- Es wird nie etwas gelöscht: nicht mehr verwendete Schlüssel bleiben
+  stehen und werden einfach ignoriert.
+- Eine höhere `config-version` als die des Plugins verhindert das Update,
+  damit eigene Anpassungen nicht durch eine ältere Standarddatei ersetzt
+  werden.
+
 Weitere Dateien:
 
 - `messages.yml` – alle Nachrichten, Farben (`&`-Codes und `&#RRGGBB`).
 - `help.yml` – Seiten der Admin-Hilfe inklusive klickbarer Navigation.
 - `commands.yml` – Aliase für alle Befehle.
-- `gui.yml` – Items, Slots und Befehle der Klick-Menüs.
+- `gui.yml` – Items, Slots, Eingaben und Befehle der Klick-Menüs.
 - `loans.yml` – gespeicherte Kredite (nur im YAML-Modus).
 
 ## Projektstruktur
@@ -342,11 +406,11 @@ Weitere Dateien:
 ```
 src/main/java/de/Minefalo/economySystem/
 ├── command/      Befehle und Alias-Registrierung
-├── config/       settings.yml, messages.yml, commands.yml, help.yml
+├── config/       Einstellungen, Nachrichten und Config-Updates
 ├── credit/       Kredite, Zinsformel und automatische Tilgung
 ├── currency/     BigDecimal-Währung (Parsen, Formatieren, Runden)
 ├── economy/      Konten, Service, Zinsberechnung und -scheduler
-├── gui/          Konfigurierbare Klick-Menüs und Chat-Abfragen
+├── gui/          Konfigurierbare Klick-Menüs, Regler, Amboss- und Spielerauswahl
 ├── help/         Mehrseitige Hilfe
 ├── listener/     Join-Handling
 ├── placeholder/  PlaceholderAPI-Erweiterungen

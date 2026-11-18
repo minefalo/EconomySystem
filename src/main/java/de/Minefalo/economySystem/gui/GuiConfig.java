@@ -1,5 +1,6 @@
 package de.Minefalo.economySystem.gui;
 
+import de.Minefalo.economySystem.config.ConfigUpdater;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.InvalidConfigurationException;
@@ -24,12 +25,14 @@ import java.util.Optional;
  *
  * <p>Jedes Item hat einen Slot, ein Material, eine Permission und eine Liste
  * von Befehlen. Die Befehle werden beim Klick als Spieler ausgeführt.
- * Optional öffnet ein Item ein Untermenü ({@code open}) oder fragt vorher
- * Werte im Chat ab ({@code prompts}).</p>
+ * Optional öffnet ein Item ein Untermenü ({@code open}) oder sammelt vorher
+ * Eingaben über {@code inputs}: ganze Zahlen per Regler, Texte über einen
+ * Amboss und Spieler über eine Kopfauswahl.</p>
  */
 public final class GuiConfig {
 
     private static final int MAX_ROWS = 6;
+    private static final long MAX_NUMBER = 1_000_000_000_000L;
 
     private final JavaPlugin plugin;
     private final File file;
@@ -38,7 +41,6 @@ public final class GuiConfig {
     private boolean enabled;
     private boolean closeOnClick;
     private String defaultMenu;
-    private String inputHint;
     private Map<String, Menu> menus = Map.of();
 
     public GuiConfig(JavaPlugin plugin) {
@@ -48,22 +50,18 @@ public final class GuiConfig {
     }
 
     public void reload() {
-        if (!file.exists()) {
-            plugin.saveResource("gui.yml", false);
-        }
-
+        ConfigUpdater.update(plugin, "gui.yml");
         config = YamlConfiguration.loadConfiguration(file);
         YamlConfiguration defaults = loadDefaults();
         if (defaults != null) {
-            // Fehlende Schlüssel fallen auf die Standardwerte zurück, ohne die
-            // Datei (und damit ihre Kommentare) neu zu schreiben.
+            // Fehlende Schlüssel fallen auch dann auf die Standardwerte
+            // zurück, wenn die Datei manuell bearbeitet wurde.
             config.setDefaults(defaults);
         }
 
         enabled = config.getBoolean("settings.enabled", true);
         closeOnClick = config.getBoolean("settings.close-on-click", true);
         defaultMenu = config.getString("settings.default-menu", "main");
-        inputHint = config.getString("settings.input-hint", "");
         menus = parseMenus();
     }
 
@@ -73,10 +71,6 @@ public final class GuiConfig {
 
     public boolean closeOnClick() {
         return closeOnClick;
-    }
-
-    public String inputHint() {
-        return inputHint;
     }
 
     /**
@@ -185,7 +179,7 @@ public final class GuiConfig {
                     lines(itemSection, "lore"),
                     itemSection.getString("permission"),
                     commands(itemSection),
-                    lines(itemSection, "prompts"),
+                    inputs(itemSection),
                     openTarget(itemSection)));
         }
         return Collections.unmodifiableMap(items);
@@ -249,8 +243,103 @@ public final class GuiConfig {
         return open.trim().toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Liest die typisierten Eingaben eines Items. Ältere Dateien mit
+     * {@code prompts} werden als Text-Eingaben (Amboss) unterstützt.
+     */
+    private List<Input> inputs(ConfigurationSection item) {
+        List<Input> result = new ArrayList<>();
+        for (Map<?, ?> map : item.getMapList("inputs")) {
+            result.add(parseInput(map));
+        }
+        if (result.isEmpty()) {
+            for (String prompt : item.getStringList("prompts")) {
+                if (prompt != null && !prompt.isBlank()) {
+                    result.add(Input.text(prompt));
+                }
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private Input parseInput(Map<?, ?> map) {
+        String type = text(map.get("type"), "text").trim().toLowerCase(Locale.ROOT);
+        String prompt = text(map.get("prompt"), "&7Eingabe");
+
+        return switch (type) {
+            case "number", "zahl" -> numberInput(map, prompt);
+            case "player", "spieler" -> new Input(Input.Type.PLAYER, prompt, 0, 0, 1, 0,
+                    filter(text(map.get("filter"), "all")),
+                    sort(text(map.get("sort"), "name-asc")));
+            default -> Input.text(prompt);
+        };
+    }
+
+    private Input numberInput(Map<?, ?> map, String prompt) {
+        long min = Math.max(-MAX_NUMBER, number(map.get("min"), 0));
+        long step = Math.max(1, number(map.get("step"), 1));
+        long max = Math.min(MAX_NUMBER, number(map.get("max"), Math.max(min + step, 1000)));
+        if (max <= min) {
+            max = Math.min(MAX_NUMBER, min + step);
+        }
+        if (step > max - min) {
+            step = Math.max(1, max - min);
+        }
+        long initial = clamp(number(map.get("default"), 100), min, max);
+        return new Input(Input.Type.NUMBER, prompt, min, max, step, snap(initial, min, max, step),
+                Input.Filter.ALL, Input.Sort.NAME_ASC);
+    }
+
+    private static Input.Filter filter(String raw) {
+        String value = raw.trim().toLowerCase(Locale.ROOT);
+        return value.equals("online") || value.equals("nur-online")
+                ? Input.Filter.ONLINE
+                : Input.Filter.ALL;
+    }
+
+    private static Input.Sort sort(String raw) {
+        return switch (raw.trim().toLowerCase(Locale.ROOT)) {
+            case "name-desc", "name-z-a" -> Input.Sort.NAME_DESC;
+            case "balance", "balance-desc", "guthaben-desc" -> Input.Sort.BALANCE_DESC;
+            case "balance-asc", "guthaben-asc" -> Input.Sort.BALANCE_ASC;
+            default -> Input.Sort.NAME_ASC;
+        };
+    }
+
+    private static String text(Object raw, String fallback) {
+        return raw == null ? fallback : String.valueOf(raw);
+    }
+
+    private static long number(Object raw, long fallback) {
+        if (raw instanceof Number value) {
+            return value.longValue();
+        }
+        if (raw instanceof String value) {
+            try {
+                return Long.parseLong(value.trim());
+            } catch (NumberFormatException ignored) {
+                // Fällt unten auf den Standardwert zurück.
+            }
+        }
+        return fallback;
+    }
+
     private static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    private static long clamp(long value, long min, long max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private static long snap(long value, long min, long max, long step) {
+        long clamped = clamp(value, min, max);
+        long offset = clamped - min;
+        long snapped = min + Math.round((double) offset / step) * step;
+        if (snapped > max) {
+            snapped = min + ((max - min) / step) * step;
+        }
+        return clamp(snapped, min, max);
     }
 
     private YamlConfiguration loadDefaults() {
@@ -294,7 +383,7 @@ public final class GuiConfig {
      * @param lore       Beschreibung
      * @param permission benötigte Permission oder {@code null}
      * @param commands   Befehle, die als Spieler ausgeführt werden
-     * @param prompts    Chat-Abfragen; {@code {input1}}, {@code {input2}} usw.
+     * @param inputs     Eingaben vor dem Ausführen ({@code {input1}}, ...)
      * @param open       Zielmenü oder {@code null}
      */
     public record Item(String key,
@@ -305,11 +394,55 @@ public final class GuiConfig {
                        List<String> lore,
                        String permission,
                        List<String> commands,
-                       List<String> prompts,
+                       List<Input> inputs,
                        String open) {
 
         public boolean isSubmenu() {
             return open != null && !open.isBlank();
+        }
+    }
+
+    /**
+     * Eine Eingabe vor dem Ausführen der Befehle.
+     *
+     * @param type    Art der Eingabe (Zahl, Text oder Spieler)
+     * @param prompt  Titel bzw. Frage der Eingabe
+     * @param min     kleinster Wert (nur {@link Type#NUMBER})
+     * @param max     größter Wert (nur {@link Type#NUMBER})
+     * @param step    Schrittweite des Reglers (nur {@link Type#NUMBER})
+     * @param initial Startwert des Reglers (nur {@link Type#NUMBER})
+     * @param filter  Startfilter der Spielerauswahl
+     * @param sort    Startsortierung der Spielerauswahl
+     */
+    public record Input(Type type,
+                        String prompt,
+                        long min,
+                        long max,
+                        long step,
+                        long initial,
+                        Filter filter,
+                        Sort sort) {
+
+        public enum Type {
+            NUMBER,
+            TEXT,
+            PLAYER
+        }
+
+        public enum Filter {
+            ALL,
+            ONLINE
+        }
+
+        public enum Sort {
+            NAME_ASC,
+            NAME_DESC,
+            BALANCE_DESC,
+            BALANCE_ASC
+        }
+
+        public static Input text(String prompt) {
+            return new Input(Type.TEXT, prompt, 0, 0, 1, 0, Filter.ALL, Sort.NAME_ASC);
         }
     }
 

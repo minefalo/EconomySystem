@@ -1,6 +1,7 @@
 package de.Minefalo.economySystem.help;
 
 import de.Minefalo.economySystem.EconomySystem;
+import de.Minefalo.economySystem.config.ConfigUpdater;
 import de.Minefalo.economySystem.util.Text;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
@@ -34,10 +35,7 @@ public final class HelpBook {
     }
 
     public void reload() {
-        if (!file.exists()) {
-            plugin.saveResource("help.yml", false);
-        }
-
+        ConfigUpdater.update(plugin, "help.yml");
         config = YamlConfiguration.loadConfiguration(file);
         YamlConfiguration defaults = loadDefaults();
         if (defaults != null) {

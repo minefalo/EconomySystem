@@ -2,6 +2,8 @@
 #  EconomySystem - Einstellungen
 # ==========================================================
 
+config-version: 1
+
 # Test-Befehle (/economysystem-admin tests ...) freischalten.
 # ACHTUNG: Die Test-Befehle verändern echte Kontostände, indem sie
 # Zinszyklen sofort ausführen. Nur auf Test-/Entwicklungsservern

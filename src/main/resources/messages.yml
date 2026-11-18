@@ -7,6 +7,8 @@
 # automatisch vor die Nachricht gesetzt.
 # ==========================================================
 
+config-version: 1
+
 prefix: "&4&lBC &r&6EconomySystem&r&c » "
 
 no-permission: "&cDazu hast du keine Berechtigung."
@@ -59,6 +61,43 @@ enabled: "aktiviert"
 gui-disabled: "&cDas Wirtschafts-Menü ist derzeit deaktiviert."
 gui-not-found: "&cDas Menü &e%menu% &cexistiert nicht."
 gui-input-cancelled: "&7Eingabe abgebrochen."
+gui-input-empty: "&cBitte gib einen Wert ein."
+
+gui-slider-track: "&e%value%"
+gui-slider-value: "&eAktueller Wert: &6%value%"
+gui-slider-hint: "&7Klicke auf die Glasscheiben, um den Wert zu ändern."
+gui-slider-decrease: "&c- %amount%"
+gui-slider-increase: "&a+ %amount%"
+gui-slider-decrease-hint: "&7Verringert den Wert."
+gui-slider-increase-hint: "&7Erhöht den Wert."
+gui-slider-confirm: "&a&lÜbernehmen"
+gui-slider-cancel: "&c&lAbbrechen"
+gui-slider-reset: "&e&lZurücksetzen"
+gui-anvil-hint: "&7Benenne den Nametag und klicke auf das Ergebnis."
+
+gui-picker-search-title: "&8Suche"
+gui-picker-search: "&e&lSuche"
+gui-picker-search-hint: "&7Klicke, um nach einem Spieler zu suchen."
+gui-picker-search-active: "&7Suche: &f%search%"
+gui-picker-filter: "&e&lFilter: &f%filter%"
+gui-picker-filter-hint: "&7Klicke, um den Filter zu wechseln."
+gui-picker-filter-all: "Alle"
+gui-picker-filter-online: "Nur online"
+gui-picker-sort: "&e&lSortierung: &f%sort%"
+gui-picker-sort-hint: "&7Klicke, um die Sortierung zu wechseln."
+gui-picker-sort-name-asc: "Name A-Z"
+gui-picker-sort-name-desc: "Name Z-A"
+gui-picker-sort-balance-desc: "Guthaben absteigend"
+gui-picker-sort-balance-asc: "Guthaben aufsteigend"
+gui-picker-page: "&7Seite &e%page% &7von &e%pages%"
+gui-picker-previous: "&a« Vorherige Seite"
+gui-picker-next: "&aNächste Seite »"
+gui-picker-cancel: "&c&lAbbrechen"
+gui-picker-loading: "&7Spieler werden geladen ..."
+gui-picker-empty: "&7Keine Spieler gefunden."
+gui-picker-head-name: "&e%player%"
+gui-picker-head-balance: "&7Guthaben: &6%balance%"
+gui-picker-head-click: "&8» &7Klicke, um diesen Spieler zu wählen."
 
 credit-disabled: "&cDas Kreditsystem ist derzeit deaktiviert."
 credit-invalid-days: "&cDie Laufzeit muss eine ganze Zahl zwischen %min% und %max% Tagen sein."

@@ -29,10 +29,7 @@ public final class Messages {
     }
 
     public void reload() {
-        if (!file.exists()) {
-            plugin.saveResource("messages.yml", false);
-        }
-
+        ConfigUpdater.update(plugin, "messages.yml");
         config = YamlConfiguration.loadConfiguration(file);
         YamlConfiguration defaults = loadDefaults();
         if (defaults != null) {

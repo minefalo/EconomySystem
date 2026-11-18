@@ -34,10 +34,7 @@ public final class CommandsConfig {
     }
 
     public void reload() {
-        if (!file.exists()) {
-            plugin.saveResource("commands.yml", false);
-        }
-
+        ConfigUpdater.update(plugin, "commands.yml");
         config = YamlConfiguration.loadConfiguration(file);
         YamlConfiguration defaults = loadDefaults();
         if (defaults != null) {

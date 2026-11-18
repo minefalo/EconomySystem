@@ -12,6 +12,8 @@
 #   - bereits belegte Befehle/Aliase werden mit einer Warnung übersprungen
 # ==========================================================
 
+config-version: 1
+
 commands:
   money:
     aliases:
