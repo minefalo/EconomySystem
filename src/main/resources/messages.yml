@@ -7,7 +7,7 @@
 # automatisch vor die Nachricht gesetzt.
 # ==========================================================
 
-config-version: 1
+config-version: 2
 
 prefix: "&4&lBC &r&6EconomySystem&r&c » "
 
@@ -62,6 +62,7 @@ gui-disabled: "&cDas Wirtschafts-Menü ist derzeit deaktiviert."
 gui-not-found: "&cDas Menü &e%menu% &cexistiert nicht."
 gui-input-cancelled: "&7Eingabe abgebrochen."
 gui-input-empty: "&cBitte gib einen Wert ein."
+gui-input-unavailable: "&cDie Eingabe konnte nicht geöffnet werden."
 
 gui-slider-track: "&e%value%"
 gui-slider-value: "&eAktueller Wert: &6%value%"

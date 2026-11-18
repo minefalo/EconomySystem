@@ -5,16 +5,16 @@ import org.bukkit.inventory.InventoryHolder;
 
 /**
  * Kennzeichnet Inventare, die dieses Plugin geöffnet hat, und ordnet sie
- * ihrer Funktion (Menü, Regler, Amboss oder Spielerauswahl) zu.
+ * ihrer Funktion (Menü, Regler oder Spielerauswahl) zu. Der Amboss wird
+ * nicht hier geführt: Er ist ein Menü des Servers und wird über die
+ * laufende Eingabe zugeordnet.
  */
 final class GuiHolder implements InventoryHolder {
 
     enum Kind {
         MENU,
         SLIDER,
-        ANVIL,
-        PICKER,
-        SEARCH
+        PICKER
     }
 
     private final Kind kind;

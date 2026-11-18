@@ -4,6 +4,7 @@ import de.Minefalo.economySystem.EconomySystem;
 import de.Minefalo.economySystem.storage.AccountData;
 import de.Minefalo.economySystem.util.Text;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
@@ -13,12 +14,11 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
-import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.Inventory;
-import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.MenuType;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.SkullMeta;
 import org.bukkit.inventory.view.AnvilView;
@@ -51,9 +51,27 @@ public final class GuiManager implements Listener {
     private static final int PICKER_FIRST = 9;
     private static final int PICKER_PAGE_SIZE = 36;
 
+    private static final int ANVIL_RESULT_SLOT = 2;
+
     private final EconomySystem plugin;
     private final GuiConfig config;
     private final Map<UUID, GuiSession> sessions = new ConcurrentHashMap<>();
+    private final Map<UUID, AnvilTarget> anvils = new ConcurrentHashMap<>();
+
+    /**
+     * Wofür ein offener Amboss verwendet wird.
+     */
+    private enum AnvilMode {
+        TEXT,
+        SEARCH
+    }
+
+    /**
+     * Verknüpft einen offenen Amboss mit der laufenden Eingabe. Der Amboss
+     * ist ein Menü des Servers und trägt daher keinen {@link GuiHolder}.
+     */
+    private record AnvilTarget(GuiSession session, AnvilMode mode) {
+    }
 
     public GuiManager(EconomySystem plugin) {
         this.plugin = plugin;
@@ -63,17 +81,20 @@ public final class GuiManager implements Listener {
     public void reload() {
         sessions.clear();
         closeInventories();
+        anvils.clear();
         config.reload();
     }
 
     public void stop() {
         sessions.clear();
         closeInventories();
+        anvils.clear();
     }
 
     private void closeInventories() {
         for (Player player : plugin.getServer().getOnlinePlayers()) {
-            if (player.getOpenInventory().getTopInventory().getHolder() instanceof GuiHolder) {
+            if (anvils.containsKey(player.getUniqueId())
+                    || player.getOpenInventory().getTopInventory().getHolder() instanceof GuiHolder) {
                 player.closeInventory();
             }
         }
@@ -358,52 +379,143 @@ public final class GuiManager implements Listener {
     // ------------------------------------------------------------
 
     private void openAnvil(Player player, GuiSession session, GuiConfig.Input input) {
-        GuiHolder holder = GuiHolder.input(GuiHolder.Kind.ANVIL, session);
-        Inventory inventory = Bukkit.createInventory(holder, InventoryType.ANVIL, Text.component(input.prompt()));
-        holder.inventory(inventory);
-        inventory.setItem(0, nametag());
-        player.openInventory(inventory);
-        prepareAnvil(player);
+        openAnvil(player, session, AnvilMode.TEXT, input.prompt(), "");
     }
 
-    private static void prepareAnvil(Player player) {
-        if (player.getOpenInventory() instanceof AnvilView anvil) {
-            anvil.setRepairCost(0);
-            anvil.setRepairItemCountCost(0);
-            anvil.setMaximumRepairCost(0);
-            anvil.bypassEnchantmentLevelRestriction(true);
+    private void openSearch(Player player, GuiSession session) {
+        GuiSession.Picker picker = session.picker();
+        openAnvil(player, session, AnvilMode.SEARCH,
+                plugin.messages().raw("gui-picker-search-title"),
+                picker == null ? "" : picker.search());
+    }
+
+    /**
+     * Öffnet einen echten Amboss über die Menü-API.
+     *
+     * <p>Ein selbst erzeugtes Inventar vom Typ {@code ANVIL} wird vom Server
+     * nur als Container-Kopie geöffnet: Es besitzt kein Feld zum Umbenennen
+     * und ist keine {@link AnvilView}, sodass der eingegebene Text nie
+     * ankommt. Deshalb wird hier ein echtes Amboss-Menü aufgebaut.</p>
+     */
+    private void openAnvil(Player player, GuiSession session, AnvilMode mode,
+                           String title, String preset) {
+        AnvilView view = null;
+        try {
+            AnvilView created = MenuType.ANVIL.builder()
+                    .title(Text.component(title))
+                    .checkReachable(false)
+                    .build(player);
+
+            Inventory top = created.getTopInventory();
+            top.clear();
+            top.setItem(0, nametag(preset));
+            created.setRepairCost(0);
+            created.setRepairItemCountCost(0);
+            created.bypassEnchantmentLevelRestriction(true);
+
+            player.openInventory(created);
+            if (player.getOpenInventory() instanceof AnvilView opened) {
+                view = opened;
+            }
+        } catch (RuntimeException exception) {
+            plugin.getLogger().warning("Amboss konnte nicht geöffnet werden: "
+                    + exception.getMessage());
         }
+        if (view == null) {
+            plugin.messages().send(player, "gui-input-unavailable");
+            cancelSession(player, session, true);
+            return;
+        }
+        anvils.put(player.getUniqueId(), new AnvilTarget(session, mode));
     }
 
-    private ItemStack nametag() {
+    private ItemStack nametag(String preset) {
         ItemStack tag = new ItemStack(Material.NAME_TAG);
         ItemMeta meta = tag.getItemMeta();
         if (meta != null) {
-            meta.displayName(Component.text(" "));
+            meta.displayName(Component.text(preset == null || preset.isBlank() ? " " : preset));
             meta.lore(List.of(label("gui-anvil-hint")));
             tag.setItemMeta(meta);
         }
         return tag;
     }
 
-    private void clickAnvil(Player player, GuiHolder holder, InventoryView view, int slot) {
-        if (slot != 2 || !(view instanceof AnvilView anvil)) {
+    private void clickAnvil(Player player, AnvilTarget target, AnvilView view, int slot) {
+        if (slot != ANVIL_RESULT_SLOT) {
             return;
         }
-        GuiSession session = holder.session();
-        if (session == null || sessions.get(player.getUniqueId()) != session || session.finished()) {
+        GuiSession session = target.session();
+        if (sessions.get(player.getUniqueId()) != session || session.finished()) {
+            anvils.remove(player.getUniqueId());
             return;
         }
 
-        String text = anvil.getRenameText();
+        String text = view.getRenameText();
+        if (text == null) {
+            // Solange nichts getippt wurde, liefert das Menü keinen Text.
+            text = inputName(view);
+        }
+        anvils.remove(player.getUniqueId());
+        clearAnvil(view);
+        player.closeInventory();
+
         if (text == null || text.isBlank()) {
             plugin.messages().send(player, "gui-input-empty");
+            // Amboss erneut öffnen, damit die Eingabe nicht verloren geht.
+            nextTick(() -> {
+                if (!player.isOnline()) {
+                    return;
+                }
+                if (target.mode() == AnvilMode.SEARCH) {
+                    openSearch(player, session);
+                } else {
+                    openAnvil(player, session, session.current());
+                }
+            });
             return;
         }
 
-        holder.handled(true);
-        session.answer(text.trim());
+        String value = text.trim();
+        if (target.mode() == AnvilMode.SEARCH) {
+            GuiSession.Picker picker = session.picker();
+            if (picker != null) {
+                picker.search(value);
+                picker.page(0);
+            }
+            nextTick(() -> openPicker(player, session));
+            return;
+        }
+
+        session.answer(value);
         nextTick(() -> beginInput(player, session));
+    }
+
+    /**
+     * Name des Items im Amboss. Er dient als Vorgabe, solange der Spieler
+     * noch nichts getippt hat.
+     */
+    private static String inputName(AnvilView view) {
+        ItemStack input = view.getTopInventory().getItem(0);
+        if (input == null) {
+            return null;
+        }
+        ItemMeta meta = input.getItemMeta();
+        if (meta == null || !meta.hasDisplayName() || meta.displayName() == null) {
+            return null;
+        }
+        return PlainTextComponentSerializer.plainText().serialize(meta.displayName());
+    }
+
+    /**
+     * Entfernt alle Items aus dem Amboss, bevor er geschlossen wird. Sonst
+     * fallen sie beim Schließen vor die Füße des Spielers.
+     */
+    private static void clearAnvil(AnvilView view) {
+        try {
+            view.getTopInventory().clear();
+        } catch (RuntimeException ignored) {
+            // Der Amboss ist bereits geschlossen.
+        }
     }
 
     // ------------------------------------------------------------
@@ -523,7 +635,10 @@ public final class GuiManager implements Listener {
                 return;
             }
             case 4 -> {
-                openSearch(player, session);
+                // Beim Wechsel in den Amboss wird dieses Inventar geschlossen:
+                // ohne "handled" würde die Eingabe dadurch abgebrochen.
+                holder.handled(true);
+                nextTick(() -> openSearch(player, session));
                 return;
             }
             case 8 -> {
@@ -569,32 +684,6 @@ public final class GuiManager implements Listener {
         player.closeInventory();
         session.answer(visible.get(index).name());
         nextTick(() -> beginInput(player, session));
-    }
-
-    private void openSearch(Player player, GuiSession session) {
-        GuiHolder holder = GuiHolder.input(GuiHolder.Kind.SEARCH, session);
-        Inventory inventory = Bukkit.createInventory(holder, InventoryType.ANVIL,
-                label("gui-picker-search-title"));
-        holder.inventory(inventory);
-        inventory.setItem(0, nametag());
-        player.openInventory(inventory);
-        prepareAnvil(player);
-    }
-
-    private void clickSearch(Player player, GuiHolder holder, InventoryView view, int slot) {
-        if (slot != 2 || !(view instanceof AnvilView anvil)) {
-            return;
-        }
-        GuiSession session = holder.session();
-        if (session == null || sessions.get(player.getUniqueId()) != session || session.picker() == null) {
-            return;
-        }
-
-        String text = anvil.getRenameText();
-        session.picker().search(text == null ? "" : text);
-        session.picker().page(0);
-        holder.handled(true);
-        nextTick(() -> openPicker(player, session));
     }
 
     private List<AccountData> visibleAccounts(GuiSession.Picker picker) {
@@ -670,32 +759,49 @@ public final class GuiManager implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onClick(InventoryClickEvent event) {
-        if (!(event.getView().getTopInventory().getHolder() instanceof GuiHolder holder)) {
-            return;
-        }
-        // Klicks in unseren Menüs gehören dem Plugin, nicht dem Spieler.
-        event.setCancelled(true);
-
         if (!(event.getWhoClicked() instanceof Player player)) {
             return;
         }
-        if (event.getClickedInventory() == null
-                || !event.getClickedInventory().equals(event.getView().getTopInventory())) {
+
+        if (event.getView().getTopInventory().getHolder() instanceof GuiHolder holder) {
+            // Klicks in unseren Menüs gehören dem Plugin, nicht dem Spieler.
+            event.setCancelled(true);
+            if (!isTopInventoryClick(event)) {
+                return;
+            }
+            switch (holder.kind()) {
+                case MENU -> clickMenu(player, holder, event.getSlot());
+                case SLIDER -> clickSlider(player, holder, event.getSlot());
+                case PICKER -> clickPicker(player, holder, event.getSlot());
+            }
             return;
         }
 
-        switch (holder.kind()) {
-            case MENU -> clickMenu(player, holder, event.getSlot());
-            case SLIDER -> clickSlider(player, holder, event.getSlot());
-            case ANVIL -> clickAnvil(player, holder, event.getView(), event.getSlot());
-            case PICKER -> clickPicker(player, holder, event.getSlot());
-            case SEARCH -> clickSearch(player, holder, event.getView(), event.getSlot());
+        AnvilTarget target = anvils.get(player.getUniqueId());
+        if (target == null || !(event.getView() instanceof AnvilView view)) {
+            return;
         }
+        // Im Amboss darf nichts entnommen oder abgelegt werden.
+        event.setCancelled(true);
+        if (!isTopInventoryClick(event)) {
+            return;
+        }
+        clickAnvil(player, target, view, event.getSlot());
+    }
+
+    private static boolean isTopInventoryClick(InventoryClickEvent event) {
+        Inventory clicked = event.getClickedInventory();
+        return clicked != null && clicked.equals(event.getView().getTopInventory());
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onDrag(InventoryDragEvent event) {
         if (event.getView().getTopInventory().getHolder() instanceof GuiHolder) {
+            event.setCancelled(true);
+            return;
+        }
+        if (event.getWhoClicked() instanceof Player player
+                && anvils.containsKey(player.getUniqueId())) {
             event.setCancelled(true);
         }
     }
@@ -705,6 +811,25 @@ public final class GuiManager implements Listener {
         if (!(event.getPlayer() instanceof Player player)) {
             return;
         }
+
+        if (event.getView() instanceof AnvilView view) {
+            AnvilTarget target = anvils.remove(player.getUniqueId());
+            if (target != null) {
+                clearAnvil(view);
+                GuiSession session = target.session();
+                if (sessions.get(player.getUniqueId()) != session || session.finished()) {
+                    return;
+                }
+                if (target.mode() == AnvilMode.SEARCH) {
+                    // Abbrechen der Suche führt zurück zur Spielerauswahl.
+                    nextTick(() -> openPicker(player, session));
+                    return;
+                }
+                cancelSession(player, session, false);
+                return;
+            }
+        }
+
         if (!(event.getInventory().getHolder() instanceof GuiHolder holder)) {
             return;
         }
@@ -716,17 +841,13 @@ public final class GuiManager implements Listener {
         if (session == null || sessions.get(player.getUniqueId()) != session) {
             return;
         }
-        if (holder.kind() == GuiHolder.Kind.SEARCH) {
-            // Abbrechen der Suche führt zurück zur Spielerauswahl.
-            nextTick(() -> openPicker(player, session));
-            return;
-        }
         cancelSession(player, session, false);
     }
 
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
         sessions.remove(event.getPlayer().getUniqueId());
+        anvils.remove(event.getPlayer().getUniqueId());
     }
 
     // ------------------------------------------------------------
