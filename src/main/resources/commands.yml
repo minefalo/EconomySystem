@@ -34,7 +34,6 @@ commands:
   economysystem:
     aliases:
       - es
-      - ecoadmin
 
   economysystem-admin:
     aliases:
