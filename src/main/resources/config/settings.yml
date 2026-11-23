@@ -2,7 +2,7 @@
 #  EconomySystem - Einstellungen
 # ==========================================================
 
-config-version: 3
+config-version: 4
 
 # Test-Befehle (/economysystem-admin tests ...) freischalten.
 # ACHTUNG: Die Test-Befehle verändern echte Kontostände, indem sie
@@ -66,6 +66,11 @@ interest:
   # Online-Spieler nach jedem Zyklus über ihre persönliche Gutschrift
   # informieren (Chat). Bei kurzen Intervallen ggf. deaktivieren.
   notify-players: true
+
+  # Wer führt den Zyklus aus (Commands.md, 11.4)?
+  #   auto      -> der Server, der die Lease für den Scope hält (Standard)
+  #   <server>  -> genau dieser Server aus network.id
+  executor: "auto"
 
 credits:
   # Kreditsystem aktivieren (/kredit)
@@ -140,6 +145,58 @@ suggestions:
     - "7"
     - "30"
     - "90"
+
+# Netzwerkbetrieb (Commands.md, Abschnitt 11). Ohne MySQL bleibt alles
+# Einzelserver-Verhalten: die Speicher-Schnittstelle beantwortet Lease,
+# Idempotenz und Audit mit den Standardwerten (Lease immer frei).
+network:
+  # Eindeutiger Name dieses Servers in der Datenbank.
+  id: "default"
+
+  # Gruppe für gruppenweite Wirtschaftsräume (z. B. "survival").
+  group: "default"
+
+  # Wer teilt sich Guthaben?
+  #   shared -> alle Server des Netzwerks (Standard, entspricht heute)
+  #   group  -> nur Server derselben group
+  #   server -> jeder Server für sich
+  economy-scope: "shared"
+
+  # FULL = lesen und schreiben, READ_ONLY = nur lesen (z. B. Lobby).
+  # READ_ONLY sperrt alle schreibenden Pfade im Router (11.8).
+  mode: "FULL"
+
+  # Wie erfahren Server von Änderungen anderer Server?
+  #   NONE | TTL | PLUGIN_MESSAGE | REDIS
+  invalidation: "TTL"
+
+  # Lebensdauer zwischengespeicherter Kontostände in Sekunden.
+  cache-ttl-seconds: 60
+
+  # Serverübergreifende Überweisung (11.2).
+  transfer:
+    # LOCAL -> Ziel muss auf diesem Server online sein (heutiges Verhalten)
+    # PROXY -> Ziel darf auf einem anderen Server online sein
+    # ANY   -> Ziel darf offline sein (Konto per UUID)
+    mode: "LOCAL"
+    timeout-seconds: 30
+
+  # Rate-Limits je Spieler und Pfad (11.7); der Router erzwingt sie vor der
+  # Fachlogik. count = erlaubte Aufrufe je Fenster (0 = unbegrenzt),
+  # seconds = Fensterlänge, cooldown-seconds = Mindestabstand (0 = keiner).
+  limits:
+    pay:
+      count: 10
+      seconds: 60
+      cooldown-seconds: 3
+    credit.take:
+      count: 3
+      seconds: 300
+      cooldown-seconds: 10
+    admin.balance:
+      count: 60
+      seconds: 60
+      cooldown-seconds: 0
 
 storage:
   # Speicherart: YAML oder MYSQL

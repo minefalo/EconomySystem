@@ -7,25 +7,39 @@ import org.bukkit.command.TabCompleter;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.List;
+import java.util.function.Predicate;
 
 /**
- * Ein dynamisch registrierter Alias, der an den eigentlichen Befehl
- * weiterleitet. So können Aliase zur Laufzeit aus der commands.yml
- * geladen werden, ohne sie in der plugin.yml hinterlegen zu müssen.
+ * Ein dynamisch registrierter Befehl, der an einen Executor weiterleitet:
+ * die Aliase aus der commands.yml und der Wurzelbefehl {@code /eco}. So
+ * brauchen weder Aliase noch Unterpfade einen Eintrag in der plugin.yml.
  */
 final class AliasCommand extends Command {
 
     private final CommandExecutor executor;
     private final TabCompleter tabCompleter;
+    private final Predicate<CommandSender> visible;
 
     AliasCommand(String name, String description, String usage,
-                 CommandExecutor executor, TabCompleter tabCompleter) {
+                 CommandExecutor executor, TabCompleter tabCompleter,
+                 Predicate<CommandSender> visible) {
         super(name,
                 description == null ? "" : description,
                 usage == null ? "/" + name : usage,
                 List.of());
         this.executor = executor;
         this.tabCompleter = tabCompleter;
+        this.visible = visible;
+    }
+
+    /**
+     * Blendet den Alias für Aufrufer ohne Recht aus: Bukkit fragt diese Methode
+     * vor der Vorschlagsliste und beim Ausführen eines Befehls. So erscheint
+     * z. B. {@code /ecoadmin} nur noch bei vorhandener Admin-Permission.
+     */
+    @Override
+    public boolean testPermissionSilent(@NotNull CommandSender target) {
+        return visible == null || visible.test(target);
     }
 
     @Override

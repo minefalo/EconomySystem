@@ -1,0 +1,110 @@
+# ==========================================================
+#  EconomySystem - Admin-Hilfe
+# ==========================================================
+# Diese Datei wird von /economysystem-admin help gelesen.
+# Jede Seite hat einen Titel und beliebig viele Zeilen.
+# Die Navigation unter der Seite ist im Chat klickbar.
+#
+# Platzhalter:
+#   %title%  Titel der aktuellen Seite
+#   %page%   aktuelle Seite
+#   %pages%  Anzahl der Seiten
+#
+# Formatierung: MiniMessage-Markup, z. B. <red>, <bold>, <gray>,
+# <#RRGGBB> für Hex-Farben und <reset> zum Zurücksetzen.
+# Wörtliche spitze Klammern werden mit \ geschrieben: \<Betrag>.
+# ==========================================================
+
+config-version: 2
+
+title: "<dark_gray><strikethrough>          <reset> <gold><bold>EconomySystem <gray>- Admin <reset><dark_gray><strikethrough>          "
+page-title: "<yellow><bold>%title% <dark_gray>(<gray>Seite %page%/%pages%<dark_gray>)"
+page-indicator: "<gray>Seite <yellow>%page% <gray>von <yellow>%pages%"
+
+navigation:
+  previous: "<green>« Zurück"
+  next: "<green>Weiter »"
+  previous-hover: "<gray>Klicke, um zu Seite %page% zu wechseln."
+  next-hover: "<gray>Klicke, um zu Seite %page% zu wechseln."
+
+pages:
+  - title: "Übersicht"
+    lines:
+      - "<gray>Verwalte Guthaben und Zinsen des Servers."
+      - ""
+      - "<yellow>/economysystem-admin help [Seite]"
+      - "<dark_gray>  » <gray>Zeigt diese Hilfe (mehrere Seiten)."
+      - "<yellow>/economysystem-admin info"
+      - "<dark_gray>  » <gray>Zeigt Speicher, Währung, Zinsen und Zyklus."
+      - "<yellow>/economysystem-admin reload"
+      - "<dark_gray>  » <gray>Lädt alle Konfigurationen neu."
+      - '<yellow>/economysystem-admin money \<Spieler> add|remove|set \<Betrag>'
+      - "<dark_gray>  » <gray>Ändert das Guthaben eines Spielers."
+      - '<yellow>/economysystem-admin money \<Spieler> reset'
+      - "<dark_gray>  » <gray>Setzt das Guthaben auf das Startguthaben zurück."
+      - '<yellow>/economysystem-admin zinsen \<spar|kredit> set \<Faktor>'
+      - "<dark_gray>  » <gray>Setzt den Faktor a der Zinsformel."
+      - '<yellow>/economysystem-admin tests zins-zyklus add \<Anzahl>'
+      - "<dark_gray>  » <gray>Führt Zinszyklen sofort aus (nur mit tests.enabled)."
+
+  - title: "Menü"
+    lines:
+      - "<yellow>/economysystem-gui [Menü]"
+      - "<dark_gray>  » <gray>Öffnet das klickbare Wirtschafts-Menü."
+      - "<dark_gray>  » <gray>Aliase: <yellow>/eco-gui <gray>und <yellow>/egui<gray>."
+      - ""
+      - "<gray>Jedes Item wird nur angezeigt, wenn du die passende"
+      - "<gray>Permission besitzt. Beim Klick wird der Befehl"
+      - "<gray>so ausgeführt, als hättest du ihn selbst eingegeben."
+      - "<gray>Befehle mit Argumenten öffnen passende Eingaben:"
+      - "<dark_gray>  » <gray>Ganze Zahlen: Regler aus Glasscheiben."
+      - "<dark_gray>  » <gray>Texte: Nametag im Amboss benennen."
+      - "<dark_gray>  » <gray>Spieler: Kopfauswahl mit Suche, Filter und Sortierung."
+      - "<gray>Der Chat wird dafür nicht mehr benötigt."
+      - ""
+      - "<gray>Admins erreichen das Admin-Menü über den <yellow>Stern"
+      - "<gray>in der unteren Reihe (Permission <yellow>economysystem.admin<gray>)."
+      - "<gray>Alle Items und Befehle stehen in der <yellow>gui.yml<gray>."
+
+  - title: "Geldverwaltung"
+    lines:
+      - '<yellow>/economysystem-admin money \<Spieler> add \<Betrag>'
+      - "<dark_gray>  » <gray>Schreibt dem Spieler Geld gut."
+      - '<yellow>/economysystem-admin money \<Spieler> remove \<Betrag>'
+      - "<dark_gray>  » <gray>Zieht dem Spieler Geld ab."
+      - '<yellow>/economysystem-admin money \<Spieler> set \<Betrag>'
+      - "<dark_gray>  » <gray>Setzt das Guthaben exakt auf den Betrag."
+      - '<yellow>/economysystem-admin money \<Spieler> reset'
+      - "<dark_gray>  » <gray>Setzt das Guthaben auf das konfigurierte Startguthaben."
+      - ""
+      - "<gray>Beträge werden mit <yellow>.<gray> oder <yellow>,<gray> als Dezimaltrennzeichen akzeptiert."
+      - "<gray>Das maximale Guthaben aus der <yellow>settings.yml <gray>wird immer beachtet."
+
+  - title: "Zinsen"
+    lines:
+      - "<gray>Formel: <yellow> y = a · √x"
+      - "<dark_gray>  » <gray>x = Kontostand, a = Zinsfaktor, y = Zinsbetrag"
+      - "<dark_gray>  » <gray>gültig für x ≥ 0 und a > 0"
+      - ""
+      - '<yellow>/economysystem-admin zinsen spar set \<Faktor>'
+      - "<dark_gray>  » <gray>Setzt den Sparzins (Standard: 1.3)."
+      - "<dark_gray>  » <gray>Wird am Ende des nächsten Zinszyklus gutgeschrieben."
+      - '<yellow>/economysystem-admin zinsen kredit set \<Faktor>'
+      - "<dark_gray>  » <gray>Setzt a in der Kreditformel y = x · m + a."
+      - ""
+      - "<gray>Der Zinszyklus läuft für <yellow>alle gespeicherten Konten<gray>, auch offline."
+      - "<gray>Zeitplan und Intervall stehen in der <yellow>settings.yml<gray>."
+
+  - title: "Tests"
+    lines:
+      - "<red>Achtung: <gray>Test-Befehle verändern echte Kontostände."
+      - "<gray>Sie sind nur aktiv, wenn in der <yellow>settings.yml"
+      - "<yellow> tests.enabled: true <gray>gesetzt und neu geladen wurde."
+      - ""
+      - '<yellow>/economysystem-admin tests zins-zyklus add \<Anzahl>'
+      - "<dark_gray>  » <gray>Führt den Zinszyklus sofort <yellow>\\<Anzahl> <gray>-mal aus."
+      - "<dark_gray>  » <gray>Jeder Lauf baut auf dem Guthaben des vorherigen auf,"
+      - "<dark_gray>  » <gray>simuliert also vergangene Zyklen (1 - 1000)."
+      - ""
+      - "<gray>Es wird immer der aktuelle <yellow>Sparzins-Faktor <gray>verwendet."
+      - "<gray>Der automatische Zinszyklus muss dafür aktiviert sein."

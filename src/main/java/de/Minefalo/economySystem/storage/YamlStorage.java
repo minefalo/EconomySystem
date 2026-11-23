@@ -14,6 +14,7 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -24,8 +25,12 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Speichert jedes Konto in einer eigenen YAML-Datei
- * ({@code accounts/<uuid>.yml}). Der Namensindex wird im Speicher
- * gehalten, damit {@code /money <Spieler>} ohne Datei-Scan funktioniert.
+ * ({@code accounts/<uuid>.yml}). Namens- und Guthabenindex werden im Speicher
+ * gehalten, damit {@code /money <Spieler>} ohne Datei-Scan funktioniert und
+ * Bestenliste sowie Spielerauswahl nicht bei jedem Aufruf alle Dateien parsen
+ * (SICHERHEITSAUDIT, ROT-2). Der Bestand wird beim Start einmal eingelesen und
+ * danach über die Schreib- und Einzel-Lesepfade aktuell gehalten; direkt auf
+ * dem Datenträger geänderte Dateien werden erst nach einem Neustart sichtbar.
  * Kredite liegen gebündelt in {@code loans.yml}.
  *
  * <p>Konto- und Kreditänderungen, die zusammen gehören (Kreditaufnahme,
@@ -44,6 +49,7 @@ public final class YamlStorage implements EconomyStorage {
     private final File loansFile;
     private final File journalFile;
     private final Map<String, UUID> nameIndex = new ConcurrentHashMap<>();
+    private final Map<UUID, AccountData> accountIndex = new ConcurrentHashMap<>();
     private final Map<UUID, LoanData> loans = new ConcurrentHashMap<>();
 
     public YamlStorage(JavaPlugin plugin, Settings settings) {
@@ -66,7 +72,7 @@ public final class YamlStorage implements EconomyStorage {
         // Erst den vollständigen Bestand laden, dann ein eventuell offenes
         // Journal anwenden. Sonst würde loans.yml beim Nachziehen nur die
         // Kredite aus dem Journal enthalten.
-        rebuildNameIndex();
+        rebuildIndexes();
         loadLoansFile();
         recoverJournal();
     }
@@ -88,8 +94,15 @@ public final class YamlStorage implements EconomyStorage {
         plugin.getLogger().info("Offene Speichertransaktion aus " + JOURNAL_FILE + " wurde nachgezogen.");
     }
 
-    private void rebuildNameIndex() {
+    /**
+     * Baut Namens- und Guthabenindex in einem Durchlauf über alle
+     * Konto-Dateien auf. Eine unlesbare Datei wird mit Warnung übersprungen,
+     * damit ein einzelnes beschädigtes Konto nicht den gesamten Bestand
+     * unlesbar macht.
+     */
+    private void rebuildIndexes() {
         nameIndex.clear();
+        accountIndex.clear();
         File[] files = folder.listFiles((directory, fileName) -> fileName.endsWith(FILE_EXTENSION));
         if (files == null) {
             return;
@@ -103,13 +116,19 @@ public final class YamlStorage implements EconomyStorage {
             }
             try {
                 YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
-                String name = config.getString("name");
+                String rawBalance = config.getString("balance");
+                if (rawBalance == null) {
+                    throw new StorageException("Konto-Datei ohne Guthaben: " + file.getName());
+                }
+                String name = config.getString("name", "unknown");
+                accountIndex.put(uniqueId, new AccountData(uniqueId, name,
+                        new BigDecimal(rawBalance.trim())));
                 if (name != null && !name.isBlank()) {
                     putInIndex(name, uniqueId);
                 }
             } catch (RuntimeException exception) {
-                plugin.getLogger().warning("Konto-Datei konnte nicht gelesen werden: "
-                        + file.getName() + " (" + exception.getMessage() + ")");
+                plugin.getLogger().warning("Konto-Datei konnte nicht gelesen werden und wird "
+                        + "übersprungen: " + file.getName() + " (" + exception.getMessage() + ")");
             }
         }
     }
@@ -135,7 +154,11 @@ public final class YamlStorage implements EconomyStorage {
         }
 
         String name = config.getString("name", "unknown");
-        return Optional.of(new AccountData(uniqueId, name, balance));
+        AccountData data = new AccountData(uniqueId, name, balance);
+        // Jeder Einzel-Lesevorgang hält den Guthabenindex aktuell, damit
+        // loadAll()/loadTop() keinen zweiten Datei-Durchlauf brauchen.
+        accountIndex.put(uniqueId, data);
+        return Optional.of(data);
     }
 
     @Override
@@ -152,22 +175,29 @@ public final class YamlStorage implements EconomyStorage {
         return account;
     }
 
+    /**
+     * Liefert den beim Start indizierten Bestand. Ein erneuter Durchlauf über
+     * alle Dateien entfällt; der Index wird von jedem Schreib- und
+     * Einzel-Lesezugriff aktualisiert.
+     */
     @Override
     public List<AccountData> loadAll() {
-        List<AccountData> accounts = new ArrayList<>();
-        File[] files = folder.listFiles((directory, fileName) -> fileName.endsWith(FILE_EXTENSION));
-        if (files == null) {
-            return accounts;
-        }
+        return List.copyOf(accountIndex.values());
+    }
 
-        for (File file : files) {
-            UUID uniqueId = parseUniqueId(file);
-            if (uniqueId == null) {
-                continue;
-            }
-            load(uniqueId).ifPresent(accounts::add);
-        }
-        return accounts;
+    /**
+     * Sortiert den In-Memory-Index, statt für jede Bestenliste alle
+     * Konto-Dateien zu parsen (SICHERHEITSAUDIT, ROT-2).
+     */
+    @Override
+    public List<AccountData> loadTop(int limit) {
+        int maximum = Math.max(1, limit);
+        return accountIndex.values().stream()
+                .filter(data -> data.balance().signum() > 0)
+                .sorted(Comparator.comparing(AccountData::balance, Comparator.reverseOrder())
+                        .thenComparing(AccountData::name, String.CASE_INSENSITIVE_ORDER))
+                .limit(maximum)
+                .toList();
     }
 
     @Override
@@ -290,6 +320,7 @@ public final class YamlStorage implements EconomyStorage {
 
         writeAtomically(fileFor(account.uniqueId()), config);
         putInIndex(account.name(), account.uniqueId());
+        accountIndex.put(account.uniqueId(), account);
     }
 
     /**

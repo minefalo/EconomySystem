@@ -1,12 +1,13 @@
 package de.Minefalo.economySystem;
 
 import de.Minefalo.economySystem.command.CommandRegistry;
-import de.Minefalo.economySystem.command.EconomySystemAdminCommand;
-import de.Minefalo.economySystem.command.EconomySystemCommand;
-import de.Minefalo.economySystem.command.EconomySystemGuiCommand;
-import de.Minefalo.economySystem.command.KreditCommand;
-import de.Minefalo.economySystem.command.MoneyCommand;
-import de.Minefalo.economySystem.command.PayCommand;
+import de.Minefalo.economySystem.command.module.AdminModule;
+import de.Minefalo.economySystem.command.module.BalanceModule;
+import de.Minefalo.economySystem.command.module.CreditModule;
+import de.Minefalo.economySystem.command.module.GuiModule;
+import de.Minefalo.economySystem.command.module.HelpModule;
+import de.Minefalo.economySystem.command.module.InfoModule;
+import de.Minefalo.economySystem.command.module.PayModule;
 import de.Minefalo.economySystem.config.CommandsConfig;
 import de.Minefalo.economySystem.config.Messages;
 import de.Minefalo.economySystem.config.Settings;
@@ -22,6 +23,8 @@ import de.Minefalo.economySystem.storage.EconomyStorage;
 import de.Minefalo.economySystem.storage.StorageException;
 import de.Minefalo.economySystem.storage.StorageFactory;
 import org.bukkit.plugin.java.JavaPlugin;
+
+import java.util.List;
 
 public final class EconomySystem extends JavaPlugin {
 
@@ -123,26 +126,31 @@ public final class EconomySystem extends JavaPlugin {
     }
 
     private boolean registerCommands() {
-        commandRegistry = new CommandRegistry(this, commandsConfig);
+        // Einzige Registrierungsstelle der Module (Commands.md, Abschnitt 10.3).
+        // Gruppenmodule melden ihre Kinder selbst an (CommandModule#register).
+        commandRegistry = new CommandRegistry(this, commandsConfig, List.of(
+                new BalanceModule(this, economy),
+                new PayModule(this, economy),
+                new CreditModule(this, economy, creditService),
+                new GuiModule(this, economy, guiManager),
+                new InfoModule(this, economy),
+                new HelpModule(this, economy),
+                new AdminModule(this, economy, creditService, helpBook)));
 
-        MoneyCommand moneyCommand = new MoneyCommand(this, economy);
-        PayCommand payCommand = new PayCommand(this, economy);
-        EconomySystemCommand systemCommand = new EconomySystemCommand(this, economy);
-        EconomySystemAdminCommand adminCommand = new EconomySystemAdminCommand(this, economy, helpBook);
-        KreditCommand kreditCommand = new KreditCommand(this, economy, creditService);
-        EconomySystemGuiCommand guiCommand = new EconomySystemGuiCommand(this, economy, guiManager);
-
-        boolean registered = commandRegistry.register("money", moneyCommand, moneyCommand)
-                && commandRegistry.register("pay", payCommand, payCommand)
-                && commandRegistry.register("kredit", kreditCommand, kreditCommand)
-                && commandRegistry.register("economysystem", systemCommand, systemCommand)
-                && commandRegistry.register("economysystem-admin", adminCommand, adminCommand)
-                && commandRegistry.register("economysystem-gui", guiCommand, guiCommand);
+        // Alle Kurzbefehle laufen über denselben Router; ihr Pfad steht in der
+        // commands.yml (Abschnitt 4.2).
+        boolean registered = commandRegistry.register("money", commandRegistry, commandRegistry)
+                && commandRegistry.register("pay", commandRegistry, commandRegistry)
+                && commandRegistry.register("kredit", commandRegistry, commandRegistry)
+                && commandRegistry.register("economysystem", commandRegistry, commandRegistry)
+                && commandRegistry.register("economysystem-admin", commandRegistry, commandRegistry)
+                && commandRegistry.register("economysystem-gui", commandRegistry, commandRegistry);
         if (!registered) {
             return false;
         }
 
         commandRegistry.registerAliases();
+        commandRegistry.registerRoot();
         return true;
     }
 
@@ -165,7 +173,7 @@ public final class EconomySystem extends JavaPlugin {
             guiManager = null;
         }
         if (commandRegistry != null) {
-            commandRegistry.unregisterAliases();
+            commandRegistry.unregisterDynamicCommands();
             commandRegistry = null;
         }
         if (economy != null) {
@@ -225,6 +233,14 @@ public final class EconomySystem extends JavaPlugin {
 
     public CreditService creditService() {
         return creditService;
+    }
+
+    /**
+     * Der Router aller Befehle. Die Kurzbefehle leiten ihre Aufrufe dorthin
+     * weiter, damit es nur einen Ausführungspfad gibt.
+     */
+    public CommandRegistry commandRouter() {
+        return commandRegistry;
     }
 
     /**

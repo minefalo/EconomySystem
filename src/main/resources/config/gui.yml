@@ -1,0 +1,401 @@
+# ==========================================================
+#  EconomySystem - GUI-Menüs
+# ==========================================================
+# Jedes Item wird nur angezeigt, wenn der Spieler die unter
+# "permission" angegebene Berechtigung besitzt. Beim Klick werden
+# die Befehle unter "commands" so ausgeführt, als hätte der Spieler
+# sie selbst eingegeben (/money, /pay, /kredit, ...).
+#
+# Formatierung: MiniMessage-Markup, z. B. <red>, <bold>, <gray>,
+# <#RRGGBB> für Hex-Farben und <reset> zum Zurücksetzen.
+#
+# Kopf und Infos:
+#   head: player  zeigt den Kopf des Spielers, der das Menü öffnet.
+#   Items ohne "commands" und ohne "open" sind reine Anzeigen; sie
+#   reagieren nicht auf Klicks.
+#   Platzhalter in name und lore (werden beim Öffnen gefüllt):
+#     %player%           Name des Spielers
+#     %balance%          aktuelles Guthaben
+#     %min_balance%      Untergrenze der Währung
+#     %max_balance%      Obergrenze oder "unbegrenzt"
+#     %credit_limit%     verfügbarer Kreditrahmen
+#     %credit_debt%      offene Kredite inklusive Zinsen
+#     %credit_loans%     Anzahl laufender Kredite
+#     %credit_max_loans% erlaubte Anzahl Kredite
+#     %credit_status%    "aktiviert" oder "deaktiviert"
+#
+# Eingaben (inputs): Vor dem Ausführen werden Werte abgefragt.
+#   - type: number  -> Regler aus Glasscheiben (ganze Zahlen)
+#       min, max, step, default
+#   - type: text    -> Nametag im Amboss benennen
+#       pattern: optionaler regulärer Ausdruck; die Antwort wird vor dem
+#       Einsetzen geprüft (ohne Angabe: ein einzelner Wert ohne Leerzeichen)
+#   - type: player  -> Kopfauswahl mit Suche, Filter und Sortierung
+#       filter: all | online
+#       sort:   name-asc | name-desc | balance-desc | balance-asc
+#
+# Platzhalter in commands:
+#   {player}  Name des Spielers
+#   {input}   alle Antworten (mit Leerzeichen verbunden)
+#   {input1}  erste Antwort, {input2} zweite Antwort, ...
+#   {inputN}  N-te Antwort (N = Position in inputs)
+#
+# Bestätigungspflichtige Befehle (z. B. "eco admin balance set ...")
+# öffnen vor dem Ausführen einen eigenen Bestätigungsdialog; der Klick auf
+# das Item und die Eingaben davor gelten nicht als Bestätigung.
+#
+# open:    öffnet ein anderes Menü statt Befehle auszuführen.
+# slot:    0 - (rows * 9 - 1)
+# ==========================================================
+
+# Ab config-version 4 zeigt das Hauptmenü den Spielerkopf mit den
+# Guthaben-Infos und einen allgemeinen Kredit-Button. Die alten
+# Einzel-Items (balance, kredit-add, kredit-info, kredit-pay,
+# kredit-pay-part) werden bei der Aktualisierung entfernt.
+config-version: 4
+
+settings:
+  # Menü-System aktivieren (/economysystem-gui)
+  enabled: true
+
+  # Menü, das ohne Argument geöffnet wird
+  default-menu: "main"
+
+  # Inventar schließen, bevor ein Befehl ausgeführt wird
+  close-on-click: true
+
+  # Mindestabstand zwischen zwei Klicks auf dasselbe Item in Millisekunden.
+  # 0 = kein Filter. Verhindert Doppelklicks, ohne andere Items zu blockieren.
+  click-cooldown-ms: 200
+
+menus:
+  main:
+    title: "<dark_gray><bold>Wirtschaft"
+    rows: 6
+    fill:
+      material: GRAY_STAINED_GLASS_PANE
+      name: " "
+    items:
+      guthaben:
+        slot: 4
+        material: PLAYER_HEAD
+        head: player
+        name: "<gold><bold>%player%"
+        lore:
+          - "<gray>Guthaben: <gold>%balance%"
+          - "<gray>Kreditrahmen: <yellow>%credit_limit%"
+          - "<gray>Offene Kredite: <red>%credit_debt%"
+          - ""
+          - "<dark_gray>» <gray>Nur Anzeige – kein Klick nötig."
+        permission: "economysystem.balance"
+
+      balance-others:
+        slot: 12
+        material: SUNFLOWER
+        name: "<yellow><bold>Guthaben anderer"
+        lore:
+          - "<gray>Zeigt das Guthaben eines Spielers."
+        permission: "economysystem.balance.others"
+        inputs:
+          - type: player
+            prompt: "<dark_gray>Spieler wählen"
+        commands:
+          - "money {input1}"
+
+      pay:
+        slot: 14
+        material: EMERALD
+        name: "<green><bold>Geld überweisen"
+        lore:
+          - "<gray>Überweist Geld an einen Spieler."
+        permission: "economysystem.pay"
+        inputs:
+          - type: player
+            prompt: "<dark_gray>Spieler wählen"
+          - type: number
+            prompt: "<dark_gray>Betrag"
+            min: 1
+            max: 1000000
+            step: 10
+            default: 100
+        commands:
+          - "pay {input1} {input2}"
+
+      credit:
+        slot: 22
+        material: DIAMOND
+        name: "<aqua><bold>Kredite"
+        lore:
+          - "<gray>Nimmt Kredite auf und zeigt offene Kredite."
+          - "<gray>Rückzahlung direkt im Menü möglich."
+        permission: "economysystem.kredit"
+        open: "credit"
+
+      help:
+        slot: 16
+        material: PAPER
+        name: "<white><bold>Hilfe"
+        lore:
+          - "<gray>Zeigt alle Befehle im Chat."
+        commands:
+          - "economysystem help"
+
+      admin:
+        slot: 49
+        material: NETHER_STAR
+        name: "<red><bold>Admin-Menü"
+        lore:
+          - "<gray>Verwaltet Guthaben, Zinsen und Einstellungen."
+        permission: "economysystem.admin"
+        open: "admin"
+
+  credit:
+    title: "<dark_gray><bold>Wirtschaft <reset><aqua><bold>Kredite"
+    rows: 5
+    permission: "economysystem.kredit"
+    fill:
+      material: GRAY_STAINED_GLASS_PANE
+      name: " "
+    items:
+      info-head:
+        slot: 4
+        material: PLAYER_HEAD
+        head: player
+        name: "<aqua><bold>%player%"
+        lore:
+          - "<gray>Kreditrahmen: <yellow>%credit_limit%"
+          - "<gray>Offene Kredite: <red>%credit_debt%"
+          - "<gray>Laufende Kredite: <yellow>%credit_loans%<gray>/<yellow>%credit_max_loans%"
+          - "<gray>Kreditsystem: <yellow>%credit_status%"
+        permission: "economysystem.kredit"
+
+      take:
+        slot: 19
+        material: DIAMOND
+        name: "<aqua><bold>Kredit aufnehmen"
+        lore:
+          - "<gray>Nimmt einen Kredit auf."
+          - "<dark_gray>» <gray>Rahmen und Zinsen stehen in der settings.yml."
+        permission: "economysystem.kredit"
+        inputs:
+          - type: number
+            prompt: "<dark_gray>Kreditbetrag"
+            min: 10
+            max: 1000000
+            step: 100
+            default: 100
+          - type: number
+            prompt: "<dark_gray>Laufzeit in Tagen"
+            min: 1
+            max: 365
+            step: 1
+            default: 30
+        commands:
+          - "kredit add {input1} {input2}"
+
+      info:
+        slot: 21
+        material: BOOK
+        name: "<aqua><bold>Kredit-Übersicht"
+        lore:
+          - "<gray>Zeigt Guthaben, Rahmen und alle laufenden Kredite im Chat."
+        permission: "economysystem.kredit"
+        commands:
+          - "kredit info"
+
+      repay:
+        slot: 23
+        material: GOLD_NUGGET
+        name: "<gold><bold>Alles zurückzahlen"
+        lore:
+          - "<gray>Zahlt so viel zurück, wie dein Guthaben erlaubt."
+        permission: "economysystem.kredit"
+        commands:
+          - "kredit bezahlen"
+
+      repay-part:
+        slot: 25
+        material: GOLD_INGOT
+        name: "<gold><bold>Teilbetrag zurückzahlen"
+        lore:
+          - "<gray>Zahlt einen bestimmten Betrag zurück."
+        permission: "economysystem.kredit"
+        inputs:
+          - type: number
+            prompt: "<dark_gray>Betrag"
+            min: 1
+            max: 1000000
+            step: 10
+            default: 10
+        commands:
+          - "kredit bezahlen {input1}"
+
+      back:
+        slot: 40
+        material: ARROW
+        name: "<gray><bold>Zurück"
+        lore:
+          - "<gray>Öffnet das Hauptmenü."
+        open: "main"
+
+  admin:
+    title: "<dark_gray><bold>Wirtschaft <reset><red><bold>Admin"
+    rows: 6
+    permission: "economysystem.admin"
+    fill:
+      material: BLACK_STAINED_GLASS_PANE
+      name: " "
+    items:
+      info:
+        slot: 10
+        material: BOOK
+        name: "<yellow><bold>System-Info"
+        lore:
+          - "<gray>Zeigt Speicher, Währung, Zinsen und Zyklus."
+        permission: "economysystem.admin"
+        commands:
+          - "economysystem-admin info"
+
+      help:
+        slot: 12
+        material: PAPER
+        name: "<white><bold>Admin-Hilfe"
+        lore:
+          - "<gray>Zeigt die mehrseitige Admin-Hilfe."
+        permission: "economysystem.admin"
+        commands:
+          - "economysystem-admin help"
+
+      reload:
+        slot: 14
+        material: CLOCK
+        name: "<green><bold>Neu laden"
+        lore:
+          - "<gray>Lädt alle Konfigurationen neu."
+        permission: "economysystem.reload"
+        commands:
+          - "economysystem-admin reload"
+
+      tests:
+        slot: 16
+        material: REDSTONE_TORCH
+        name: "<red><bold>Zinszyklen testen"
+        lore:
+          - "<gray>Simuliert Zinszyklen sofort."
+          - "<dark_gray>» <gray>Nur mit <yellow>tests.enabled: true<gray>."
+        permission: "economysystem.tests"
+        inputs:
+          - type: number
+            prompt: "<dark_gray>Anzahl der Zyklen"
+            min: 1
+            max: 1000
+            step: 1
+            default: 1
+        commands:
+          - "economysystem-admin tests zins-zyklus add {input1}"
+
+      money-add:
+        slot: 19
+        material: EMERALD
+        name: "<green><bold>Geld hinzufügen"
+        lore:
+          - "<gray>Schreibt einem Spieler Geld gut."
+        permission: "economysystem.admin"
+        inputs:
+          - type: player
+            prompt: "<dark_gray>Spieler wählen"
+          - type: number
+            prompt: "<dark_gray>Betrag"
+            min: 1
+            max: 1000000
+            step: 10
+            default: 100
+        commands:
+          - "economysystem-admin money {input1} add {input2}"
+
+      money-remove:
+        slot: 20
+        material: REDSTONE
+        name: "<red><bold>Geld abziehen"
+        lore:
+          - "<gray>Zieht einem Spieler Geld ab."
+        permission: "economysystem.admin"
+        inputs:
+          - type: player
+            prompt: "<dark_gray>Spieler wählen"
+          - type: number
+            prompt: "<dark_gray>Betrag"
+            min: 1
+            max: 1000000
+            step: 10
+            default: 100
+        commands:
+          - "economysystem-admin money {input1} remove {input2}"
+
+      money-set:
+        slot: 21
+        material: DIAMOND
+        name: "<aqua><bold>Guthaben setzen"
+        lore:
+          - "<gray>Setzt das Guthaben exakt."
+        permission: "economysystem.admin"
+        inputs:
+          - type: player
+            prompt: "<dark_gray>Spieler wählen"
+          - type: number
+            prompt: "<dark_gray>Betrag"
+            min: 0
+            max: 1000000
+            step: 10
+            default: 100
+        commands:
+          - "eco admin balance set {input1} {input2}"
+
+      money-reset:
+        slot: 23
+        material: BARRIER
+        name: "<red><bold>Guthaben zurücksetzen"
+        lore:
+          - "<gray>Setzt das Guthaben auf das Startguthaben."
+        permission: "economysystem.admin"
+        inputs:
+          - type: player
+            prompt: "<dark_gray>Spieler wählen"
+        commands:
+          - "eco admin balance reset {input1}"
+
+      spar-set:
+        slot: 29
+        material: WHEAT
+        name: "<gold><bold>Sparzins setzen"
+        lore:
+          - "<gray>Setzt den Faktor a des Sparzinses."
+        permission: "economysystem.admin"
+        inputs:
+          - type: text
+            prompt: "<dark_gray>Neuer Sparzins-Faktor"
+            pattern: "[0-9]{1,3}([.,][0-9]{1,6})?"
+        commands:
+          - "economysystem-admin zinsen spar set {input1}"
+
+      kredit-set:
+        slot: 31
+        material: IRON_INGOT
+        name: "<gold><bold>Kreditzins setzen"
+        lore:
+          - "<gray>Setzt a in y = x · m + a."
+        permission: "economysystem.admin"
+        inputs:
+          - type: text
+            prompt: "<dark_gray>Neuer Kreditzins-Faktor"
+            pattern: "[0-9]{1,3}([.,][0-9]{1,6})?"
+        commands:
+          - "economysystem-admin zinsen kredit set {input1}"
+
+      back:
+        slot: 49
+        material: ARROW
+        name: "<gray><bold>Zurück"
+        lore:
+          - "<gray>Öffnet das Hauptmenü."
+        open: "main"

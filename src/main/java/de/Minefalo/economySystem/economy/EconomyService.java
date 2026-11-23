@@ -3,15 +3,23 @@ package de.Minefalo.economySystem.economy;
 import de.Minefalo.economySystem.config.Settings;
 import de.Minefalo.economySystem.currency.Currency;
 import de.Minefalo.economySystem.storage.AccountData;
+import de.Minefalo.economySystem.storage.AuditEntry;
 import de.Minefalo.economySystem.storage.EconomyStorage;
+import de.Minefalo.economySystem.storage.LeaseInfo;
 import de.Minefalo.economySystem.storage.LoanData;
 import de.Minefalo.economySystem.storage.StorageException;
+import de.Minefalo.economySystem.storage.TransferData;
+import de.Minefalo.economySystem.storage.TransferResult;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -35,6 +43,11 @@ public final class EconomyService {
     private final JavaPlugin plugin;
     private final Settings settings;
     private final EconomyStorage storage;
+    /** TTL der Zins-Lease; nach einem Absturz übernimmt der nächste Server. */
+    private static final long LEASE_TTL_MILLIS = TimeUnit.MINUTES.toMillis(5);
+
+    private static final DateTimeFormatter CYCLE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm");
+
     private final Map<UUID, Account> accounts = new ConcurrentHashMap<>();
     private final ExecutorService executor;
     private IncomeHandler incomeHandler;
@@ -182,8 +195,10 @@ public final class EconomyService {
 
     /**
      * Liefert die Konten mit dem höchsten Guthaben (absteigend) asynchron.
-     * Cache und Speicher werden zusammengeführt, damit auch offline
-     * gespeicherte Konten berücksichtigt werden.
+     * Aus dem Speicher kommen nur die besten {@code limit} Einträge
+     * ({@link EconomyStorage#loadTop}); der Cache der Online-Spieler wird
+     * zusätzlich zusammengeführt, weil deren Guthaben aktueller sein kann als
+     * der gespeicherte Stand.
      *
      * @param limit maximale Anzahl der Einträge
      */
@@ -199,7 +214,9 @@ public final class EconomyService {
             executor.execute(() -> {
                 try {
                     Map<UUID, AccountData> balances = new LinkedHashMap<>();
-                    for (AccountData data : storage.loadAll()) {
+                    // Der Speicher liefert nur die besten Einträge; loadAll()
+                    // bleibt dem Zinszyklus vorbehalten (SICHERHEITSAUDIT, ROT-2).
+                    for (AccountData data : storage.loadTop(maximum)) {
                         balances.put(data.uniqueId(), data);
                     }
                     for (Account account : accounts.values()) {
@@ -476,6 +493,100 @@ public final class EconomyService {
      * @return Future mit dem Ergebnis des Zyklus
      */
     public CompletableFuture<InterestResult> runInterestCycle(BigDecimal savingsFactor) {
+        return runInterestCycle(savingsFactor, null);
+    }
+
+    /**
+     * Zinszyklus eines geplanten Laufs: prüft die Lease des Scopes und bucht
+     * jeden Zyklusschlüssel genau einmal (Abschnitt 11.4). Ohne diese Prüfung
+     * würde jeder Server im Netzwerk denselben Zyklus ausführen.
+     */
+    public CompletableFuture<InterestResult> runScheduledInterestCycle(BigDecimal savingsFactor,
+                                                                       String cycleKey) {
+        return runInterestCycle(savingsFactor, cycleKey);
+    }
+
+    /**
+     * Schlüssel des aktuellen Zyklus: aus {@code interest.start-time} und
+     * {@code interest.interval-minutes} berechnet, damit zwei Server zum
+     * selben Lauf denselben Schlüssel erzeugen.
+     */
+    public String cycleKey() {
+        Settings.Interest interest = settings.interest();
+        LocalTime start = interest.startTime();
+        int interval = Math.max(1, interest.intervalMinutes());
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime anchor = now.toLocalDate().atTime(start);
+        long minutes = Duration.between(anchor, now).toMinutes();
+        long slot = minutes <= 0 ? 0 : minutes / interval;
+        return anchor.plusMinutes(slot * interval).format(CYCLE_FORMAT);
+    }
+
+    /**
+     * Bucht eine Überweisung idempotent im Speicher (Abschnitt 11.2). Vorher
+     * werden eigene, noch nicht gespeicherte Änderungen geschrieben, damit die
+     * Datenbank nicht mit einem älteren Stand überschrieben wird.
+     */
+    public CompletableFuture<TransferResult> remoteTransferAsync(TransferData data) {
+        CompletableFuture<TransferResult> future = new CompletableFuture<>();
+        if (executor.isShutdown()) {
+            future.complete(TransferResult.FAILED);
+            return future;
+        }
+        try {
+            executor.execute(() -> {
+                try {
+                    List<AccountData> pending = new ArrayList<>();
+                    Account from = accounts.get(data.from());
+                    if (from != null) {
+                        pending.add(from.snapshot());
+                    }
+                    Account to = accounts.get(data.to());
+                    if (to != null) {
+                        pending.add(to.snapshot());
+                    }
+                    if (!pending.isEmpty()) {
+                        storage.saveAll(pending);
+                    }
+
+                    TransferResult result = storage.transfer(data, currency().maxBalance());
+                    recordTransferAudit(data, result);
+                    if (result == TransferResult.APPLIED) {
+                        // Eigene Schreibwerte nie aus einem fremden Cache lesen (11.3).
+                        accounts.remove(data.from());
+                        accounts.remove(data.to());
+                    }
+                    future.complete(result);
+                } catch (Throwable throwable) {
+                    future.completeExceptionally(throwable);
+                }
+            });
+        } catch (RuntimeException exception) {
+            future.completeExceptionally(exception);
+        }
+        return future;
+    }
+
+    /**
+     * Protokolliert eine Fernbuchung (11.6). Ein Fehler im Audit darf die
+     * Buchung nicht kippen: die Buchung ist die Wahrheit, das Audit die Spur.
+     */
+    private void recordTransferAudit(TransferData data, TransferResult result) {
+        try {
+            storage.recordAudit(new AuditEntry(data.id(), System.currentTimeMillis(),
+                    settings.network().id(), data.scope(),
+                    data.from(), data.fromName(), "PLAYER", "pay",
+                    data.to(), data.toName(), data.amount(), null, null,
+                    result == TransferResult.APPLIED
+                            ? AuditEntry.Result.APPLIED : AuditEntry.Result.REJECTED));
+        } catch (RuntimeException exception) {
+            plugin.getLogger().warning("Audit-Eintrag für " + data.id()
+                    + " konnte nicht geschrieben werden: " + exception.getMessage());
+        }
+    }
+
+    private CompletableFuture<InterestResult> runInterestCycle(BigDecimal savingsFactor,
+                                                              String cycleKey) {
         CompletableFuture<InterestResult> future = new CompletableFuture<>();
         if (savingsFactor == null || savingsFactor.signum() <= 0) {
             future.completeExceptionally(new IllegalArgumentException(
@@ -491,7 +602,7 @@ public final class EconomyService {
         try {
             executor.execute(() -> {
                 try {
-                    future.complete(applyInterestCycle(savingsFactor));
+                    future.complete(applyInterestCycle(savingsFactor, cycleKey));
                 } catch (Throwable throwable) {
                     future.completeExceptionally(throwable);
                 }
@@ -502,7 +613,41 @@ public final class EconomyService {
         return future;
     }
 
-    private InterestResult applyInterestCycle(BigDecimal savingsFactor) {
+    private InterestResult applyInterestCycle(BigDecimal savingsFactor, String cycleKey) {
+        Settings.Network network = settings.network();
+        String scope = network.scopeKey();
+        if (cycleKey == null) {
+            return creditInterest(savingsFactor);
+        }
+
+        if (!settings.interest().runsOn(network.id())) {
+            plugin.getLogger().info("Zinszyklus übersprungen: interest.executor ist '"
+                    + settings.interest().executor() + "'.");
+            return emptyCycle();
+        }
+        if (!storage.acquireLease(scope, network.id(), LEASE_TTL_MILLIS)) {
+            String holder = storage.lease(scope).map(LeaseInfo::holder).orElse("?");
+            plugin.getLogger().warning("Zinszyklus übersprungen: die Lease für '" + scope
+                    + "' hält '" + holder + "'.");
+            return emptyCycle();
+        }
+        try {
+            if (!storage.claimInterestRun(scope, cycleKey)) {
+                plugin.getLogger().info("Zinszyklus '" + cycleKey + "' wurde im Scope '"
+                        + scope + "' bereits gebucht.");
+                return emptyCycle();
+            }
+            return creditInterest(savingsFactor);
+        } finally {
+            storage.releaseLease(scope, network.id());
+        }
+    }
+
+    private static InterestResult emptyCycle() {
+        return new InterestResult(0, 0, BigDecimal.ZERO, Map.of());
+    }
+
+    private InterestResult creditInterest(BigDecimal savingsFactor) {
         // Gespeicherte Konten laden und mit den aktuellen Cache-Werten
         // überschreiben, damit keine Änderungen verloren gehen.
         Map<UUID, AccountData> balances = new LinkedHashMap<>();

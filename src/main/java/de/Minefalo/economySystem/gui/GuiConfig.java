@@ -1,17 +1,16 @@
 package de.Minefalo.economySystem.gui;
 
+import de.Minefalo.economySystem.config.ConfigFileWriter;
 import de.Minefalo.economySystem.config.ConfigUpdater;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
-import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -19,6 +18,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * Liest die gui.yml und stellt die konfigurierten Menüs bereit.
@@ -34,6 +35,15 @@ public final class GuiConfig {
     private static final int MAX_ROWS = 6;
     private static final long MAX_NUMBER = 1_000_000_000_000L;
 
+    /**
+     * Ab dieser Version zeigt das Hauptmenü den Spielerkopf mit Guthaben-Infos
+     * und einen eigenen Kredit-Button. Die abgelösten Einzel-Items werden
+     * beim Update entfernt, damit die neuen Einträge greifen.
+     */
+    private static final int LAYOUT_VERSION = 4;
+    private static final List<String> LEGACY_MAIN_ITEMS = List.of(
+            "balance", "kredit-add", "kredit-info", "kredit-pay", "kredit-pay-part");
+
     private final JavaPlugin plugin;
     private final File file;
 
@@ -46,14 +56,15 @@ public final class GuiConfig {
 
     public GuiConfig(JavaPlugin plugin) {
         this.plugin = plugin;
-        this.file = new File(plugin.getDataFolder(), "gui.yml");
+        this.file = ConfigUpdater.file(plugin, "gui.yml");
         reload();
     }
 
     public void reload() {
+        migrateLayout();
         ConfigUpdater.update(plugin, "gui.yml");
         config = YamlConfiguration.loadConfiguration(file);
-        YamlConfiguration defaults = loadDefaults();
+        YamlConfiguration defaults = ConfigUpdater.bundled(plugin, "gui.yml");
         if (defaults != null) {
             // Fehlende Schlüssel fallen auch dann auf die Standardwerte
             // zurück, wenn die Datei manuell bearbeitet wurde.
@@ -142,7 +153,7 @@ public final class GuiConfig {
 
     private Menu parseMenu(String id, ConfigurationSection section) {
         int rows = clamp(section.getInt("rows", MAX_ROWS), 1, MAX_ROWS);
-        String title = section.getString("title", "&8&l" + id);
+        String title = section.getString("title", "<dark_gray><bold>" + id);
         String permission = section.getString("permission");
         Fill fill = parseFill(section.getConfigurationSection("fill"));
         Map<Integer, Item> items = parseItems(id, section.getConfigurationSection("items"), rows * 9);
@@ -185,12 +196,13 @@ public final class GuiConfig {
                     slot,
                     material,
                     clamp(itemSection.getInt("amount", 1), 1, 64),
-                    itemSection.getString("name", "&f" + key),
+                    itemSection.getString("name", "<white>" + key),
                     lines(itemSection, "lore"),
                     itemSection.getString("permission"),
                     commands(itemSection),
                     inputs(itemSection),
-                    openTarget(itemSection)));
+                    openTarget(itemSection),
+                    headTarget(itemSection)));
         }
         return Collections.unmodifiableMap(items);
     }
@@ -254,6 +266,57 @@ public final class GuiConfig {
     }
 
     /**
+     * {@code head: player} zeigt den Kopf des Spielers, der das Menü öffnet.
+     */
+    private static String headTarget(ConfigurationSection section) {
+        String head = section.getString("head");
+        if (head == null || head.isBlank()) {
+            return null;
+        }
+        return head.trim().toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * Entfernt beim Wechsel auf {@link #LAYOUT_VERSION} die abgelösten Items
+     * des Hauptmenüs. Nur diese Schlüssel werden gelöscht; alle anderen Menüs
+     * und Items bleiben unverändert. Anschließend ergänzt der
+     * {@link ConfigUpdater} die neuen Standardeinträge.
+     */
+    private void migrateLayout() {
+        if (!file.exists()) {
+            return;
+        }
+        YamlConfiguration existing = YamlConfiguration.loadConfiguration(file);
+        if (existing.getInt("config-version", 0) >= LAYOUT_VERSION) {
+            return;
+        }
+        ConfigurationSection items = existing.getConfigurationSection("menus.main.items");
+        if (items == null) {
+            return;
+        }
+
+        boolean changed = false;
+        for (String key : LEGACY_MAIN_ITEMS) {
+            if (items.contains(key)) {
+                items.set(key, null);
+                changed = true;
+            }
+        }
+        if (!changed) {
+            return;
+        }
+
+        try {
+            String before = Files.readString(file.toPath(), StandardCharsets.UTF_8);
+            ConfigFileWriter.writeIfChanged(file.toPath(), before, existing.saveToString(),
+                    ConfigUpdater.backupFolder(plugin).toPath(), plugin.getLogger());
+        } catch (IOException exception) {
+            plugin.getLogger().warning("gui.yml konnte nicht auf das neue Layout umgestellt werden: "
+                    + exception.getMessage());
+        }
+    }
+
+    /**
      * Liest die typisierten Eingaben eines Items. Ältere Dateien mit
      * {@code prompts} werden als Text-Eingaben (Amboss) unterstützt.
      */
@@ -274,14 +337,15 @@ public final class GuiConfig {
 
     private Input parseInput(Map<?, ?> map) {
         String type = text(map.get("type"), "text").trim().toLowerCase(Locale.ROOT);
-        String prompt = text(map.get("prompt"), "&7Eingabe");
+        String prompt = text(map.get("prompt"), "<gray>Eingabe");
 
         return switch (type) {
             case "number", "zahl" -> numberInput(map, prompt);
             case "player", "spieler" -> new Input(Input.Type.PLAYER, prompt, 0, 0, 1, 0,
                     filter(text(map.get("filter"), "all")),
-                    sort(text(map.get("sort"), "name-asc")));
-            default -> Input.text(prompt);
+                    sort(text(map.get("sort"), "name-asc")),
+                    null);
+            default -> Input.text(prompt, pattern(map.get("pattern")));
         };
     }
 
@@ -297,7 +361,26 @@ public final class GuiConfig {
         }
         long initial = clamp(number(map.get("default"), 100), min, max);
         return new Input(Input.Type.NUMBER, prompt, min, max, step, snap(initial, min, max, step),
-                Input.Filter.ALL, Input.Sort.NAME_ASC);
+                Input.Filter.ALL, Input.Sort.NAME_ASC, null);
+    }
+
+    /**
+     * Antwortmuster einer Text-Eingabe ({@code pattern}); {@code null}, wenn
+     * keines konfiguriert ist. Ein ungültiger Ausdruck wird gemeldet und
+     * ignoriert, statt den Start zu verhindern.
+     */
+    private Pattern pattern(Object raw) {
+        String value = raw == null ? "" : String.valueOf(raw).trim();
+        if (value.isEmpty()) {
+            return null;
+        }
+        try {
+            return Pattern.compile(value);
+        } catch (PatternSyntaxException exception) {
+            plugin.getLogger().warning("gui.yml: Ungültiges pattern '" + value + "': "
+                    + exception.getDescription());
+            return null;
+        }
     }
 
     private static Input.Filter filter(String raw) {
@@ -352,21 +435,6 @@ public final class GuiConfig {
         return clamp(snapped, min, max);
     }
 
-    private YamlConfiguration loadDefaults() {
-        try (InputStream input = plugin.getResource("gui.yml")) {
-            if (input == null) {
-                return null;
-            }
-            YamlConfiguration defaults = new YamlConfiguration();
-            defaults.load(new InputStreamReader(input, StandardCharsets.UTF_8));
-            return defaults;
-        } catch (IOException | InvalidConfigurationException exception) {
-            plugin.getLogger().warning("Standard-gui.yml konnte nicht geladen werden: "
-                    + exception.getMessage());
-            return null;
-        }
-    }
-
     /**
      * Ein Menü mit Titel, Größe und Items.
      */
@@ -395,6 +463,7 @@ public final class GuiConfig {
      * @param commands   Befehle, die als Spieler ausgeführt werden
      * @param inputs     Eingaben vor dem Ausführen ({@code {input1}}, ...)
      * @param open       Zielmenü oder {@code null}
+     * @param head       {@code player} für den Kopf des Betrachters, sonst {@code null}
      */
     public record Item(String key,
                        int slot,
@@ -405,10 +474,25 @@ public final class GuiConfig {
                        String permission,
                        List<String> commands,
                        List<Input> inputs,
-                       String open) {
+                       String open,
+                       String head) {
 
         public boolean isSubmenu() {
             return open != null && !open.isBlank();
+        }
+
+        /**
+         * Ob das Item den Kopf des Spielers zeigt, der das Menü geöffnet hat.
+         */
+        public boolean isPlayerHead() {
+            return "player".equals(head) || "self".equals(head);
+        }
+
+        /**
+         * Ob das Item nur etwas anzeigt und auf Klicks nicht reagiert.
+         */
+        public boolean isDisplayOnly() {
+            return !isSubmenu() && commands.isEmpty();
         }
     }
 
@@ -423,6 +507,7 @@ public final class GuiConfig {
      * @param initial Startwert des Reglers (nur {@link Type#NUMBER})
      * @param filter  Startfilter der Spielerauswahl
      * @param sort    Startsortierung der Spielerauswahl
+     * @param pattern Antwortmuster einer Text-Eingabe oder {@code null}
      */
     public record Input(Type type,
                         String prompt,
@@ -431,7 +516,8 @@ public final class GuiConfig {
                         long step,
                         long initial,
                         Filter filter,
-                        Sort sort) {
+                        Sort sort,
+                        Pattern pattern) {
 
         public enum Type {
             NUMBER,
@@ -452,7 +538,11 @@ public final class GuiConfig {
         }
 
         public static Input text(String prompt) {
-            return new Input(Type.TEXT, prompt, 0, 0, 1, 0, Filter.ALL, Sort.NAME_ASC);
+            return text(prompt, null);
+        }
+
+        public static Input text(String prompt, Pattern pattern) {
+            return new Input(Type.TEXT, prompt, 0, 0, 1, 0, Filter.ALL, Sort.NAME_ASC, pattern);
         }
     }
 

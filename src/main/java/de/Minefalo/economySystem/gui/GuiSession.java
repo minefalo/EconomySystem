@@ -32,6 +32,10 @@ final class GuiSession {
         return inputs.get(index);
     }
 
+    List<GuiConfig.Input> inputs() {
+        return inputs;
+    }
+
     boolean finished() {
         return index >= inputs.size();
     }

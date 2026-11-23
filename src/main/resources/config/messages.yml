@@ -1,0 +1,214 @@
+# ==========================================================
+#  EconomySystem - Nachrichten
+# ==========================================================
+# Formatierung: MiniMessage-Markup, z. B. <red>, <bold>, <gray>,
+# <#RRGGBB> für Hex-Farben und <reset> zum Zurücksetzen.
+# Platzhalter werden automatisch ersetzt (z. B. %balance%, %player%).
+# %prefix% kann überall eingefügt werden; ohne %prefix% wird er
+# automatisch vor die Nachricht gesetzt.
+# ==========================================================
+
+config-version: 8
+
+prefix: "<dark_red><bold>BC <reset><gold>EconomySystem<reset><red> » "
+
+# ------------------------------------------------------------------
+# Schlüssel nach dem Schema aus Commands.md (Abschnitt 9.1/9.2).
+# Die bisherigen Schlüssel (no-permission, usage-…) bleiben als
+# Fallback gültig; die neuen Schlüssel haben Vorrang.
+# ------------------------------------------------------------------
+command:
+  _default:
+    usage: "<red>Verwendung: <yellow>%syntax%"
+    error:
+      no-permission: "<red>Dazu hast du keine Berechtigung."
+      player-only: "<red>Dieser Befehl ist nur für Spieler verfügbar."
+      unknown-subcommand: "<red>Unbekannter Befehl <yellow>%input%<red>. Meintest du <yellow>%suggestion%<red>?"
+      unknown-subcommand-plain: "<red>Unbekannten Befehl <yellow>%input%<red> gibt es nicht. <gray>/eco help zeigt alle Befehle."
+      confirm-required: "<red>Wiederhole den Befehl mit <yellow>--confirm<red>: <yellow>%syntax%"
+      rate-limited: "<red>Bitte warte noch <yellow>%seconds% Sekunden<red>."
+      read-only: "<red>Dieser Server ist schreibgeschützt (READ_ONLY). Geldbewegungen sind hier deaktiviert."
+  admin:
+    interest:
+      show: "<gray>Sparzins: <yellow>%savings% <dark_gray>| <gray>Kreditzins: <yellow>%credit%"
+    credit:
+      list:
+        header: "<gold><bold>Kredite <dark_gray>(<gray>%player%<dark_gray>)"
+        empty: "<gray>%player% hat keine laufenden Kredite."
+  pay:
+    error:
+      recipient-online-only: "<red>Der Empfänger muss auf diesem Server online sein (network.transfer.mode: LOCAL)."
+      no-route: "<red>Für den Empfänger ist kein Zielserver bekannt."
+      remote-not-allowed: "<red>Serverübergreifende Überweisungen erfordern economysystem.pay.remote."
+      remote-failed: "<red>Die Überweisung konnte nicht gebucht werden. Bitte informiere einen Administrator."
+      duplicate: "<yellow>Diese Überweisung wurde bereits gebucht (gleiche tx-id)."
+      insufficient: "<red>Du hast nicht genug Geld für diese Überweisung."
+    remote-sent: "<green>Überweisung gebucht: <gold>%amount% <green>an <yellow>%player%<green>. <dark_gray>(tx %tx%)"
+
+no-permission: "<red>Dazu hast du keine Berechtigung."
+player-only: "<red>Dieser Befehl ist nur für Spieler verfügbar."
+read-only: "<red>Dieser Server ist schreibgeschützt (READ_ONLY). Geldbewegungen sind hier deaktiviert."
+player-not-found: "<red>Der Spieler <yellow>%player% <red>wurde nicht gefunden."
+storage-error: "<red>Es gab einen Fehler beim Zugriff auf die Daten. Bitte informiere einen Administrator."
+invalid-amount: "<red>„%input%“ ist kein gültiger Betrag."
+amount-too-large: "<red>Der Betrag überschreitet das maximale Guthaben von <yellow>%max%<red>."
+insufficient-funds: "<red>Du hast nicht genug Geld. Dein Guthaben: <yellow>%balance%"
+insufficient-funds-other: "<yellow>%player% <red>hat nicht genug Geld. Guthaben: <yellow>%balance%"
+
+balance-self: "<gray>Dein Guthaben: <gold>%balance%"
+balance-other: "<gray>Guthaben von <yellow>%player%<gray>: <gold>%balance%"
+balance-on-join: "<gray>Dein Guthaben: <gold>%balance%"
+
+interest-credited: "<green>Zinsgutschrift: <gold>%amount% <green>auf dein Konto."
+
+top-header: "<gold><bold>Top-Guthaben <dark_gray>(<gray>Seite %page%/%pages%<dark_gray>)"
+top-entry: "<dark_gray>#%rank% <yellow>%player% <dark_gray>» <gold>%balance%"
+top-empty: "<gray>Es sind noch keine Guthaben vorhanden."
+top-invalid-page: "<red>„%input%“ ist keine gültige Seite."
+
+pay-recipient-offline: "<red>Der Empfänger muss für eine sichere Überweisung online sein."
+pay-self: "<red>Du kannst dir nicht selbst Geld überweisen."
+
+pay-sent: "<green>Du hast <yellow>%player% <gold>%amount% <green>gesendet. Neues Guthaben: <gold>%balance%"
+pay-received: "<green>Du hast <gold>%amount% <green>von <yellow>%player% <green>erhalten. Neues Guthaben: <gold>%balance%"
+balance-given: "<green>Du hast <yellow>%player% <gold>%amount% <green>gegeben. Neues Guthaben: <gold>%balance%"
+balance-taken: "<green>Du hast <yellow>%player% <gold>%amount% <green>abgezogen. Neues Guthaben: <gold>%balance%"
+balance-set: "<green>Das Guthaben von <yellow>%player% <green>wurde auf <gold>%balance% <green>gesetzt."
+
+reload-success: "<green>Einstellungen, Nachrichten, Menü, Hilfe und Befehle wurden neu geladen."
+
+tests-interest-disabled: "<red>Die Zinsen sind deaktiviert; die Simulation wurde nicht gestartet."
+tests-disabled: "<red>Die Test-Befehle sind deaktiviert. Setze in der settings.yml <yellow>tests.enabled: true<red> und lade mit <yellow>/economysystem-admin reload<red> neu."
+tests-cycles-invalid: "<red>Die Anzahl muss eine ganze Zahl zwischen 1 und %max% sein."
+tests-started: "<gray>Simuliere <yellow>%cycles% <gray>Zinszyklen mit dem Sparzins-Faktor <yellow>%factor%<gray> ..."
+tests-result: "<green>%cycles% Zinszyklen simuliert: <yellow>%credited% <green>von <yellow>%checked% <green>Konten verzinst, insgesamt <gold>%total% <green>gutgeschrieben."
+tests-failed: "<red>Die Simulation ist fehlgeschlagen: <yellow>%error%"
+
+# Noch gelesen: usage-economysystem (Vorschlag bei unbekanntem Pfad) und die
+# beiden Altformen von /economysystem-admin. Alle anderen Pfade melden ihre
+# Syntax über command._default.usage aus dem Modul.
+usage-economysystem: "<red>Verwendung: <yellow>/economysystem help"
+usage-admin-money: '<red>Verwendung: <yellow>/economysystem-admin money \<Spieler> \<add|remove|set> \<Betrag>'
+usage-admin-zinsen: '<red>Verwendung: <yellow>/economysystem-admin zinsen \<spar|kredit> set \<Faktor>'
+
+invalid-page: "<red>„%input%“ ist keine gültige Seitenzahl."
+settings-error: "<red>Die Einstellungen konnten nicht gespeichert werden. Prüfe die Konsolenausgabe."
+help-empty: "<red>Es sind keine Hilfe-Seiten in der help.yml konfiguriert."
+
+unlimited: "unbegrenzt"
+disabled: "deaktiviert"
+enabled: "aktiviert"
+
+gui-disabled: "<red>Das Wirtschafts-Menü ist derzeit deaktiviert."
+gui-not-found: "<red>Das Menü <yellow>%menu% <red>existiert nicht."
+gui-input-cancelled: "<gray>Eingabe abgebrochen."
+gui-input-empty: "<red>Bitte gib einen Wert ein."
+gui-input-unavailable: "<red>Die Eingabe konnte nicht geöffnet werden."
+gui-input-invalid: "<red>Diese Eingabe ist nicht erlaubt: ein einzelner Wert ohne Leerzeichen und ohne --."
+
+gui-slider-track: "<yellow>%value%"
+gui-slider-value: "<yellow>Aktueller Wert: <gold>%value%"
+gui-slider-hint: "<gray>Klicke auf die Glasscheiben, um den Wert zu ändern."
+gui-slider-decrease: "<red>- %amount%"
+gui-slider-increase: "<green>+ %amount%"
+gui-slider-decrease-hint: "<gray>Verringert den Wert."
+gui-slider-increase-hint: "<gray>Erhöht den Wert."
+gui-slider-confirm: "<green><bold>Übernehmen"
+gui-slider-cancel: "<red><bold>Abbrechen"
+gui-slider-reset: "<yellow><bold>Zurücksetzen"
+gui-anvil-hint: "<gray>Benenne den Nametag und klicke auf das Ergebnis."
+gui-confirm-title: "<dark_gray><bold>Bestätigung erforderlich"
+gui-confirm-accept: "<green><bold>Bestätigen"
+gui-confirm-cancel: "<red><bold>Abbrechen"
+gui-confirm-hint: "<gray>Diese Aktion ändert Guthaben unwiderruflich."
+
+gui-picker-search-title: "<dark_gray>Suche"
+gui-picker-search: "<yellow><bold>Suche"
+gui-picker-search-hint: "<gray>Klicke, um nach einem Spieler zu suchen."
+gui-picker-search-active: "<gray>Suche: <white>%search%"
+gui-picker-filter: "<yellow><bold>Filter: <white>%filter%"
+gui-picker-filter-hint: "<gray>Klicke, um den Filter zu wechseln."
+gui-picker-filter-all: "Alle"
+gui-picker-filter-online: "Nur online"
+gui-picker-sort: "<yellow><bold>Sortierung: <white>%sort%"
+gui-picker-sort-hint: "<gray>Klicke, um die Sortierung zu wechseln."
+gui-picker-sort-name-asc: "Name A-Z"
+gui-picker-sort-name-desc: "Name Z-A"
+gui-picker-sort-balance-desc: "Guthaben absteigend"
+gui-picker-sort-balance-asc: "Guthaben aufsteigend"
+gui-picker-page: "<gray>Seite <yellow>%page% <gray>von <yellow>%pages%"
+gui-picker-previous: "<green>« Vorherige Seite"
+gui-picker-next: "<green>Nächste Seite »"
+gui-picker-cancel: "<red><bold>Abbrechen"
+gui-picker-loading: "<gray>Spieler werden geladen ..."
+gui-picker-empty: "<gray>Keine Spieler gefunden."
+gui-picker-head-name: "<yellow>%player%"
+gui-picker-head-balance: "<gray>Guthaben: <gold>%balance%"
+gui-picker-head-click: "<dark_gray>» <gray>Klicke, um diesen Spieler zu wählen."
+
+credit-disabled: "<red>Das Kreditsystem ist derzeit deaktiviert."
+credit-invalid-days: "<red>Die Laufzeit muss eine ganze Zahl zwischen %min% und %max% Tagen sein."
+credit-too-many-loans: "<red>Du hast bereits %count% von maximal %max% Krediten."
+credit-no-line: "<red>Du hast keinen verfügbaren Kreditrahmen. Dein Guthaben ist nach Abzug laufender Kredite nicht positiv."
+credit-limit-exceeded: "<red>Der Betrag überschreitet deinen Kreditrahmen. Maximal möglich: <yellow>%max% <gray>(%multiplier%-faches Eigenkapital)."
+credit-amount-too-small: "<red>Der Mindestbetrag für einen Kredit ist <yellow>%min%<red>."
+credit-max-balance: "<red>Durch die Auszahlung würde das maximale Guthaben von <yellow>%max% <red>überschritten."
+credit-created: "<green>Kredit über <gold>%amount% <green>für <yellow>%days% Tage <green>aufgenommen. Zinsen: <gold>%interest% <green>→ Rückzahlung: <gold>%total% <green>(bis <yellow>%due%<green>)."
+credit-paid: "<green>Du hast <gold>%amount% <green>zurückgezahlt. Noch offen: <red>%remaining%"
+credit-nothing-to-pay: "<gray>Du hast keine offenen Kredite."
+credit-no-money: "<red>Du hast kein Guthaben, das du zurückzahlen könntest."
+credit-info-header: "<gold><bold>Kredite"
+credit-info-balance: "<gray>Guthaben: <gold>%balance% <dark_gray>(<gray>Untergrenze: %min%<dark_gray>)"
+credit-info-limit: "<gray>Verfügbarer Kreditrahmen: <yellow>%limit% <dark_gray>(<gray>%multiplier%-faches Eigenkapital<dark_gray>)"
+credit-info-loans: "<gray>Laufende Kredite: <yellow>%count%<gray>/<yellow>%max%"
+credit-info-none: "<gray>Du hast keine laufenden Kredite."
+credit-info-entry: "<dark_gray>» <yellow>#%id% <gray>offen: <red>%remaining% <dark_gray>(<gray>Zinsen: %interest%<dark_gray>) <gray>fällig: <yellow>%due% <dark_gray>[<gray>%status%<dark_gray>]"
+credit-status-running: "läuft"
+credit-status-overdue: "überfällig"
+credit-status-collecting: "Tilgung läuft"
+credit-income-seized: "<gray>%amount% deiner Einnahmen wurden automatisch für deinen Kredit verwendet. Noch offen: <red>%remaining%"
+credit-forced-paid: "<red>Dein Kredit über <yellow>%credit% <red>ist fällig. Es wurden <yellow>%amount% <red>zwangsweise abgebucht."
+credit-hardship: "<red>Dein Kredit ist fällig und dein Guthaben hat die Untergrenze von <yellow>%floor% <red>erreicht. <yellow>%waived% <red>Zinsen wurden erlassen, offen bleiben <yellow>%remaining%<red>. Alle Einnahmen werden automatisch zur Rückzahlung verwendet."
+credit-completed: "<green>Dein Kredit über <gold>%amount% <green>ist vollständig zurückgezahlt."
+
+help:
+  - "<gold><bold>Guthaben"
+  - "<yellow>/money <gray>- Zeigt dein Guthaben"
+  - '<yellow>/money \<Spieler> <gray>- Zeigt das Guthaben eines Spielers'
+  - "<yellow>/money top [Seite] <gray>- Zeigt die reichsten Spieler"
+  - '<yellow>/pay \<Spieler> \<Betrag> <gray>- Überweist Geld an einen Spieler'
+  - '<yellow>/kredit add \<Betrag> \<Tage> <gray>- Nimmt einen Kredit auf'
+  - "<yellow>/kredit bezahlen [Betrag] <gray>- Zahlt deinen Kredit zurück"
+  - "<yellow>/kredit info <gray>- Zeigt Guthaben, Rahmen und laufende Kredite"
+  - "<yellow>/economysystem-gui <gray>- Öffnet das klickbare Wirtschafts-Menü"
+
+help-admin:
+  - "<gold><bold>EconomySystem"
+  - "<yellow>/economysystem help <gray>- Zeigt diese Hilfe"
+  - "<yellow>/economysystem-admin help <gray>- Zeigt die Admin-Hilfe (mehrere Seiten)"
+  - "<yellow>/economysystem-admin info <gray>- Zeigt Informationen zum System"
+  - "<yellow>/economysystem-admin reload <gray>- Lädt alle Konfigurationen neu"
+  - "<yellow>/economysystem-gui admin <gray>- Öffnet das Admin-Menü"
+  - '<yellow>/economysystem-admin tests zins-zyklus add \<Anzahl> <gray>- Simuliert Zinszyklen (nur mit tests.enabled)'
+
+info:
+  - "<gold><bold>EconomySystem <gray>v%version%"
+  - "<gray>Speicher: <yellow>%storage%"
+  - "<gray>Währung: <yellow>%currency% <gray>(%symbol%)"
+  - "<gray>Nachkommastellen: <yellow>%decimals%"
+  - "<gray>Startguthaben: <yellow>%starting-balance%"
+  - "<gray>Maximalguthaben: <yellow>%max-balance%"
+  - "<gray>Minimalguthaben: <yellow>%min-balance%"
+  - "<gray>Kreditsystem: <yellow>%credits%"
+  - "<gray>Auto-Save: <yellow>%save-interval%"
+  - "<gray>Konten im Cache: <yellow>%accounts%"
+  - "<gray>Sparzins: <yellow>%interest-savings% <gray>(y = a·√x)"
+  - "<gray>Kreditzins: <yellow>%interest-credit%"
+  - "<gray>Zinszyklus: <yellow>%interest-cycle%"
+
+balance-reset: "<green>Das Guthaben von <yellow>%player% <green>wurde auf das Startguthaben von <gold>%balance% <green>zurückgesetzt."
+interest-set: "<green>Der %type% <green>wurde auf <gold>%factor% <green>gesetzt."
+interest-credit-hint: "<gray>Der Kreditzins gilt ab sofort für neue Kredite."
+interest-factor-invalid: "<red>Der Zinsfaktor muss eine Zahl größer als 0 sein."
+interest-type-savings: "Sparzins"
+interest-type-credit: "Kreditzins"

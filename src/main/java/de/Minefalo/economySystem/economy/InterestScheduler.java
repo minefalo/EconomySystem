@@ -80,10 +80,17 @@ public final class InterestScheduler {
         plugin.getLogger().info("Zinszyklus gestartet (Sparzins-Faktor "
                 + factor.stripTrailingZeros().toPlainString() + ").");
 
-        economy.runInterestCycle(factor).whenComplete((result, error) -> {
+        // Geplanter Lauf: Lease und Zyklusschlüssel verhindern, dass mehrere
+        // Server denselben Zyklus buchen (Commands.md, 11.4).
+        economy.runScheduledInterestCycle(factor, economy.cycleKey()).whenComplete((result, error) -> {
             running.set(false);
             if (error != null) {
                 plugin.getLogger().severe("Zinszyklus fehlgeschlagen: " + messageOf(error));
+                return;
+            }
+            if (result.accountsChecked() == 0 && result.accountsCredited() == 0) {
+                plugin.getLogger().info("Zinszyklus ohne Buchung beendet (Lease bei einem anderen"
+                        + " Server, Zyklus bereits gebucht oder keine Konten).");
                 return;
             }
             plugin.getLogger().info("Zinszyklus abgeschlossen: " + result.accountsCredited()

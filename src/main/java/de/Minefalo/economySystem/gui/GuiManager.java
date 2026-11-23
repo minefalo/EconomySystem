@@ -1,6 +1,10 @@
 package de.Minefalo.economySystem.gui;
 
 import de.Minefalo.economySystem.EconomySystem;
+import de.Minefalo.economySystem.config.Settings;
+import de.Minefalo.economySystem.credit.CreditService;
+import de.Minefalo.economySystem.currency.Currency;
+import de.Minefalo.economySystem.economy.Account;
 import de.Minefalo.economySystem.storage.AccountData;
 import de.Minefalo.economySystem.util.Text;
 import net.kyori.adventure.text.Component;
@@ -23,21 +27,27 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.SkullMeta;
 import org.bukkit.inventory.view.AnvilView;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 /**
  * Öffnet die konfigurierten GUI-Menüs, führt Klicks aus und sammelt Eingaben.
  *
- * <p>Klicks auf Items lösen ausschließlich Befehle aus, die vom Spieler
- * selbst ausgeführt werden ({@link Player#performCommand(String)}). Items
- * ohne passende Permission werden nicht angezeigt. Werte werden nie über
- * den Chat eingegeben: ganze Zahlen über einen Regler aus Glasscheiben,
+ * <p>Klicks auf Items lösen ausschließlich Befehle aus, die über den Router
+ * mit {@code Origin.GUI} laufen ({@code CommandRegistry.dispatchGui}) und
+ * daher dieselben Prüfstufen wie ein Chat-Befehl durchlaufen. Ein Klick
+ * bestätigt keine bestätigungspflichtige Aktion: Verlangt der Pfad
+ * {@code --confirm}, zeigt die GUI zuerst einen eigenen Bestätigungsdialog.
+ * Items ohne passende Permission werden nicht angezeigt. Werte werden nie
+ * über den Chat eingegeben: ganze Zahlen über einen Regler aus Glasscheiben,
  * Texte über einen Amboss und Spieler über eine durchsuchbare Kopfauswahl.</p>
  */
 public final class GuiManager implements Listener {
@@ -53,11 +63,23 @@ public final class GuiManager implements Listener {
 
     private static final int ANVIL_RESULT_SLOT = 2;
 
+    /** Höchstlänge einer Antwort; sie wird genau ein Argument der Befehlszeile. */
+    private static final int ANSWER_MAX_LENGTH = 64;
+    private static final Pattern ANSWER_NUMBER = Pattern.compile("-?\\d{1,19}");
+    /** Spielernamen inkl. der Punkt-Präfixe von Bedrock-/Floodgate-Konten. */
+    private static final Pattern ANSWER_PLAYER = Pattern.compile("[A-Za-z0-9_.]{1,16}");
+
+    private static final int CONFIRM_SIZE = 27;
+    private static final int CONFIRM_ACCEPT = 11;
+    private static final int CONFIRM_CANCEL = 15;
+
     private final EconomySystem plugin;
     private final GuiConfig config;
     private final Map<UUID, GuiSession> sessions = new ConcurrentHashMap<>();
     private final Map<ClickKey, Long> lastCommandClick = new ConcurrentHashMap<>();
     private final Map<UUID, AnvilTarget> anvils = new ConcurrentHashMap<>();
+    /** Befehle, die auf die Bestätigung des Spielers warten. */
+    private final Map<UUID, List<String>> confirmations = new ConcurrentHashMap<>();
 
     /**
      * Wofür ein offener Amboss verwendet wird.
@@ -91,6 +113,7 @@ public final class GuiManager implements Listener {
         lastCommandClick.clear();
         closeInventories();
         anvils.clear();
+        confirmations.clear();
         config.reload();
     }
 
@@ -99,6 +122,7 @@ public final class GuiManager implements Listener {
         lastCommandClick.clear();
         closeInventories();
         anvils.clear();
+        confirmations.clear();
     }
 
     private void closeInventories() {
@@ -165,11 +189,12 @@ public final class GuiManager implements Listener {
         Inventory inventory = Bukkit.createInventory(holder, menu.size(), Text.component(menu.title()));
         holder.inventory(inventory);
 
+        Map<String, String> placeholders = placeholders(player, account(player));
         ItemStack fill = menu.fill() == null ? null : createFill(menu.fill());
         for (int slot = 0; slot < menu.size(); slot++) {
             GuiConfig.Item item = menu.items().get(slot);
             if (item != null && hasAccess(player, item.permission())) {
-                inventory.setItem(slot, createItem(item));
+                inventory.setItem(slot, createItem(player, item, placeholders));
             } else if (fill != null) {
                 inventory.setItem(slot, fill.clone());
             }
@@ -178,18 +203,77 @@ public final class GuiManager implements Listener {
         player.openInventory(inventory);
     }
 
-    private ItemStack createItem(GuiConfig.Item item) {
+    /**
+     * Konto aus dem Cache. Die Module laden es über {@code prepare()} vor; ein
+     * fehlendes Konto führt nur zu Platzhaltern, nie zu einem Speicherzugriff
+     * auf dem Tick-Thread.
+     */
+    private Account account(Player player) {
+        return plugin.economy() == null ? null
+                : plugin.economy().find(player.getName()).orElse(null);
+    }
+
+    private ItemStack createItem(Player player, GuiConfig.Item item, Map<String, String> placeholders) {
         ItemStack stack = new ItemStack(item.material(), item.amount());
         ItemMeta meta = stack.getItemMeta();
         if (meta != null) {
-            meta.displayName(Text.component(item.name()));
+            if (item.isPlayerHead() && meta instanceof SkullMeta skull) {
+                skull.setOwningPlayer(player);
+            }
+            meta.displayName(Text.component(resolve(item.name(), placeholders)));
             if (!item.lore().isEmpty()) {
-                meta.lore(item.lore().stream().map(Text::component).toList());
+                meta.lore(item.lore().stream()
+                        .map(line -> Text.component(resolve(line, placeholders)))
+                        .toList());
             }
             meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
             stack.setItemMeta(meta);
         }
         return stack;
+    }
+
+    /**
+     * Werte für die Platzhalter in {@code name} und {@code lore}. Kreditwerte
+     * kommen live aus dem {@link CreditService}, damit die Anzeige beim
+     * nächsten Öffnen des Menüs bereits aktuell ist.
+     */
+    private Map<String, String> placeholders(Player player, Account account) {
+        Currency currency = plugin.settings().currency();
+        Settings.Credits creditConfig = plugin.settings().credits();
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put("%player%", player.getName());
+        values.put("%balance%", account == null ? "-" : currency.format(account.balance()));
+        values.put("%min_balance%", currency.format(currency.minBalance()));
+        BigDecimal maxBalance = currency.maxBalance();
+        values.put("%max_balance%", maxBalance == null
+                ? plugin.messages().raw("unlimited")
+                : currency.format(maxBalance));
+        values.put("%credit_status%", plugin.messages().raw(creditConfig.enabled()
+                ? "enabled" : "disabled"));
+        values.put("%credit_max_loans%", String.valueOf(creditConfig.maxLoans()));
+
+        CreditService credit = plugin.creditService();
+        if (credit == null || account == null) {
+            values.put("%credit_limit%", "-");
+            values.put("%credit_debt%", "-");
+            values.put("%credit_loans%", "0");
+            return values;
+        }
+        values.put("%credit_limit%", currency.format(credit.maxLoan(account)));
+        values.put("%credit_debt%", currency.format(credit.outstanding(account.uniqueId())));
+        values.put("%credit_loans%", String.valueOf(credit.activeLoanCount(account.uniqueId())));
+        return values;
+    }
+
+    private static String resolve(String text, Map<String, String> placeholders) {
+        if (text == null || placeholders.isEmpty()) {
+            return text;
+        }
+        String result = text;
+        for (Map.Entry<String, String> entry : placeholders.entrySet()) {
+            result = result.replace(entry.getKey(), entry.getValue());
+        }
+        return result;
     }
 
     private ItemStack createFill(GuiConfig.Fill fill) {
@@ -217,7 +301,7 @@ public final class GuiManager implements Listener {
             nextTick(() -> open(player, item.open()));
             return;
         }
-        if (item.commands().isEmpty() || holder.handled()) {
+        if (item.isDisplayOnly() || holder.handled()) {
             return;
         }
         long cooldown = config.clickCooldownMs();
@@ -258,6 +342,11 @@ public final class GuiManager implements Listener {
         if (session.finished()) {
             sessions.remove(player.getUniqueId());
             player.closeInventory();
+            if (!answersAllowed(session)) {
+                plugin.messages().send(player, "gui-input-invalid");
+                reopenOrigin(player, session);
+                return;
+            }
             runCommands(player, substitute(session.commands(), session.answers(), player.getName()));
             return;
         }
@@ -273,13 +362,21 @@ public final class GuiManager implements Listener {
     private void cancelSession(Player player, GuiSession session, boolean reopen) {
         sessions.remove(player.getUniqueId());
         plugin.messages().send(player, "gui-input-cancelled");
-        if (reopen && session.originMenu() != null) {
-            nextTick(() -> {
-                if (player.isOnline()) {
-                    open(player, session.originMenu());
-                }
-            });
+        if (reopen) {
+            reopenOrigin(player, session);
         }
+    }
+
+    /** Öffnet das Menü wieder, aus dem die Eingabe gestartet wurde. */
+    private void reopenOrigin(Player player, GuiSession session) {
+        if (session.originMenu() == null) {
+            return;
+        }
+        nextTick(() -> {
+            if (player.isOnline()) {
+                open(player, session.originMenu());
+            }
+        });
     }
 
     // ------------------------------------------------------------
@@ -801,6 +898,7 @@ public final class GuiManager implements Listener {
                 case MENU -> clickMenu(player, holder, event.getSlot());
                 case SLIDER -> clickSlider(player, holder, event.getSlot());
                 case PICKER -> clickPicker(player, holder, event.getSlot());
+                case CONFIRM -> clickConfirm(player, holder, event.getSlot());
             }
             return;
         }
@@ -861,6 +959,14 @@ public final class GuiManager implements Listener {
         if (!(event.getInventory().getHolder() instanceof GuiHolder holder)) {
             return;
         }
+        if (holder.kind() == GuiHolder.Kind.CONFIRM) {
+            // Schließen ohne Klick ist ein Abbruch.
+            if (!holder.handled()) {
+                confirmations.remove(player.getUniqueId());
+                plugin.messages().send(player, "gui-input-cancelled");
+            }
+            return;
+        }
         if (holder.kind() == GuiHolder.Kind.MENU || holder.handled()) {
             return;
         }
@@ -876,6 +982,7 @@ public final class GuiManager implements Listener {
     public void onQuit(PlayerQuitEvent event) {
         sessions.remove(event.getPlayer().getUniqueId());
         anvils.remove(event.getPlayer().getUniqueId());
+        confirmations.remove(event.getPlayer().getUniqueId());
         lastCommandClick.keySet().removeIf(key -> key.player().equals(event.getPlayer().getUniqueId()));
     }
 
@@ -888,10 +995,110 @@ public final class GuiManager implements Listener {
             if (!player.isOnline()) {
                 return;
             }
-            for (String command : commands) {
-                player.performCommand(command);
+            boolean needsConfirmation = commands.stream()
+                    .anyMatch(plugin.commandRouter()::requiresConfirmation);
+            if (needsConfirmation) {
+                openConfirm(player, commands);
+                return;
             }
+            dispatchCommands(player, commands, false);
         });
+    }
+
+    private void dispatchCommands(Player player, List<String> commands, boolean confirmed) {
+        for (String command : commands) {
+            plugin.commandRouter().dispatchGui(player, command, confirmed);
+        }
+    }
+
+    /**
+     * Fragt vor einer bestätigungspflichtigen Aktion nach. Erst der Klick auf
+     * "Bestätigen" setzt {@code confirmed} - der Klick auf das Item im Menü
+     * und die Eingaben davor zählen nicht als Bestätigung.
+     */
+    private void openConfirm(Player player, List<String> commands) {
+        confirmations.put(player.getUniqueId(), List.copyOf(commands));
+        GuiHolder holder = GuiHolder.confirm();
+        Inventory inventory = Bukkit.createInventory(holder, CONFIRM_SIZE,
+                Text.component(plugin.messages().raw("gui-confirm-title")));
+        holder.inventory(inventory);
+
+        ItemStack filler = item(Material.BLACK_STAINED_GLASS_PANE, Component.text(" "), List.of());
+        for (int slot = 0; slot < CONFIRM_SIZE; slot++) {
+            inventory.setItem(slot, filler);
+        }
+        inventory.setItem(CONFIRM_ACCEPT, item(Material.LIME_CONCRETE,
+                label("gui-confirm-accept"), List.of(label("gui-confirm-hint"))));
+        inventory.setItem(CONFIRM_CANCEL, item(Material.RED_CONCRETE,
+                label("gui-confirm-cancel"), List.of()));
+        player.openInventory(inventory);
+    }
+
+    private void clickConfirm(Player player, GuiHolder holder, int slot) {
+        if (slot != CONFIRM_ACCEPT && slot != CONFIRM_CANCEL) {
+            return;
+        }
+        List<String> commands = confirmations.remove(player.getUniqueId());
+        if (commands == null) {
+            return;
+        }
+        holder.handled(true);
+        player.closeInventory();
+        if (slot != CONFIRM_ACCEPT) {
+            plugin.messages().send(player, "gui-input-cancelled");
+            return;
+        }
+        dispatchCommands(player, commands, true);
+    }
+
+    /**
+     * Prüft die Antworten einer beendeten Eingabe, bevor sie in die
+     * Befehlszeile wandern: jede Antwort muss ein einzelnes Argument ohne
+     * Leerzeichen und ohne führendes {@code --} sein und zum Eingabetyp passen.
+     * Damit kann ein Textfeld weder zusätzliche Argumente noch Flags
+     * einschleusen (SICHERHEITSAUDIT, ORANGE-1).
+     */
+    private static boolean answersAllowed(GuiSession session) {
+        List<GuiConfig.Input> inputs = session.inputs();
+        List<String> answers = session.answers();
+        if (inputs.size() != answers.size()) {
+            return false;
+        }
+        for (int index = 0; index < answers.size(); index++) {
+            if (!answerAllowed(inputs.get(index), answers.get(index))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean answerAllowed(GuiConfig.Input input, String answer) {
+        if (answer == null || answer.isEmpty() || answer.length() > ANSWER_MAX_LENGTH) {
+            return false;
+        }
+        for (int index = 0; index < answer.length(); index++) {
+            char character = answer.charAt(index);
+            if (character < ' ' || character == '\u007f' || Character.isWhitespace(character)) {
+                return false;
+            }
+        }
+        if (answer.startsWith("--")) {
+            return false;
+        }
+        return switch (input.type()) {
+            case NUMBER -> ANSWER_NUMBER.matcher(answer).matches() && inRange(input, answer);
+            case PLAYER -> ANSWER_PLAYER.matcher(answer).matches();
+            case TEXT -> input.pattern() == null || input.pattern().matcher(answer).matches();
+        };
+    }
+
+    private static boolean inRange(GuiConfig.Input input, String answer) {
+        try {
+            long value = Long.parseLong(answer);
+            return value >= input.min() && value <= input.max();
+        } catch (NumberFormatException exception) {
+            return false;
+        }
     }
 
     /**

@@ -1,0 +1,102 @@
+# ==========================================================
+#  EconomySystem - Befehle, Kurzbefehle und Aliase
+# ==========================================================
+# Kanonische Pfade und Wörter stehen in Commands.md. Diese Datei
+# ändert nur Schreibweisen, niemals die Struktur.
+#
+# Regeln:
+#   - Aliase: nur a-z, 0-9, _ und - (maximal 32 Zeichen), keine Leerzeichen
+#   - bereits belegte Befehle/Aliase werden mit einer Warnung übersprungen
+#   - subcommand-words ersetzen Schreibweisen vor dem Routing; sie sind
+#     keine eigenen Pfade
+#   - shortcuts ordnen einem in der plugin.yml deklarierten Befehl einen
+#     Pfad zu; neue Unterbefehle brauchen hier keinen Eintrag
+#   - Einträge mit unbekanntem Pfad werden beim Laden gemeldet; sie bleiben
+#     wirkungslos
+# ==========================================================
+
+config-version: 2
+
+# Wörter, die innerhalb eines Pfades als Synonym gelten.
+# Aufbau: kanonisches Wort -> Liste der Schreibweisen.
+subcommand-words:
+  balance:   [ "guthaben", "kontostand" ]
+  top:       [ "rangliste", "bestenliste" ]
+  pay:       [ "ueberweisen", "ueberweisung" ]
+  credit:    [ "kredit", "darlehen" ]
+  take:      [ "aufnehmen", "nehmen", "add" ]
+  repay:     [ "bezahlen", "zahlen", "pay", "zurueckzahlen", "tilgen" ]
+  info:      [ "status" ]
+  list:      [ "liste" ]
+  add:       [ "give", "hinzufuegen" ]
+  remove:    [ "entfernen", "take" ]
+  set:       [ "setzen" ]
+  reset:     [ "zuruecksetzen" ]
+  savings:   [ "spar", "sparen" ]
+  # 'zinsen' bleibt Argument von 'admin interest set' bzw. der bisherigen
+  # Schreibweise '/economysystem-admin zinsen ...'; als Pfadwort würde es den
+  # alten Aufruf in die falsche Reihenfolge zwingen.
+  interest:  [ ]
+  reload:    [ "neu-laden" ]
+  run:       [ "trigger", "ausfuehren" ]
+  audit:     [ "protokoll" ]
+  network:   [ "netzwerk" ]
+  test:      [ "tests" ]
+  interest-cycle: [ "zins-zyklus", "zinszyklus" ]
+
+# Aliase je Wurzel- oder Kurzbefehl (wie bisher).
+commands:
+  eco:
+    # Der Wurzelbefehl wird dynamisch registriert. 'es' bleibt vorerst beim
+    # bestehenden Befehl economysystem (gleicher Baum, gleiches Verhalten).
+    aliases: []
+
+  economysystem:
+    aliases: [ "es" ]
+
+  money:
+    aliases: [ "geld", "balance", "coins" ]
+
+  pay:
+    aliases: [ "zahlen", "ueberweisen" ]
+
+  kredit:
+    aliases: [ "credit", "darlehen" ]
+
+  economysystem-gui:
+    aliases: [ "eco-gui", "egui" ]
+
+  economysystem-admin:
+    aliases: [ "esa", "ecoadm", "ecoadmin" ]
+
+# Kurzbefehle: ordnet einem in der plugin.yml deklarierten Befehl einen Pfad zu.
+# Neue Unterbefehle brauchen hier KEINEN Eintrag.
+shortcuts:
+  money:
+    path: "balance"
+  pay:
+    path: "pay"
+  kredit:
+    path: "credit"
+  economysystem:
+    path: "help"
+  economysystem-gui:
+    path: "gui"
+  economysystem-admin:
+    path: "admin"
+  # Ein zusätzlicher Kurzbefehl (z. B. /guthaben-top) braucht weiterhin einen
+  # Eintrag in der plugin.yml; hier wird nur der Pfad zugeordnet:
+  # guthaben-top:
+  #   path: "balance.top"
+  #   args: [ "1" ]
+
+# Vorschläge für die Tab-Vervollständigung je Pfad und Argument.
+# Schlüssel: <pfad>.<argument>. Sie greifen nur, wenn das Modul selbst keine
+# Vorschläge liefert; fehlt ein Eintrag, gelten die Standards aus settings.yml.
+suggestions:
+  pay.amount: [ "1", "10", "100", "1000", "10000" ]
+  credit.take.amount: [ "100", "500", "1000", "5000" ]
+  credit.take.days: [ "7", "30", "90" ]
+  credit.repay.amount: [ "10", "50", "100", "500" ]
+  admin.interest.set.factor: [ "1.0", "1.3", "2.0" ]
+  admin.audit.action: [ "pay", "admin.balance.set", "admin.interest.run" ]

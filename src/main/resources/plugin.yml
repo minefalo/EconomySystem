@@ -16,25 +16,27 @@ libraries:
   - com.mysql:mysql-connector-j:9.1.0
 
 # Aliase werden in der commands.yml registriert.
+# Kurzbefehle; der Pfad steht in der commands.yml (Commands.md, 4.2).
+# Die usage-Texte nennen die kanonische Syntax aus Commands.md, Abschnitt 5.
 commands:
   money:
     description: Zeigt dein Guthaben oder das eines Spielers an.
-    usage: /money [Spieler]
+    usage: /eco balance [<konto>]
   pay:
     description: Überweist Geld an einen anderen Spieler.
-    usage: /pay <Spieler> <Betrag>
+    usage: /eco pay <konto> <betrag> [--reason <text>]
   kredit:
     description: Nimmt einen Kredit auf, zahlt ihn zurück oder zeigt ihn an.
-    usage: /kredit <add <Betrag> <Tage>|bezahlen [Betrag]|info>
+    usage: /eco credit <take <betrag> <tage>|repay [<betrag>]|info|list>
   economysystem:
     description: Hauptbefehl für die Hilfe.
-    usage: /economysystem <help>
+    usage: /eco help [<seite>]
   economysystem-admin:
     description: Admin-Befehl für Geldverwaltung, Zinsen, Informationen, Reload und Tests.
-    usage: /economysystem-admin <help|info|reload|money|zinsen|tests>
+    usage: /eco admin <help|info|reload|balance|credit|interest|test>
   economysystem-gui:
     description: Öffnet das klickbare Wirtschafts-Menü.
-    usage: /economysystem-gui [Menü]
+    usage: /eco gui [<menü>]
 
 permissions:
   economysystem.balance:
@@ -63,4 +65,55 @@ permissions:
     default: op
   economysystem.tests:
     description: Erlaubt zusätzlich zu economysystem.admin die Test-Befehle (nur wenn tests.enabled in der settings.yml aktiv ist).
+    default: op
+
+  # Neue Knoten nach Commands.md, Abschnitt 7.1. Die bisherigen Knoten
+  # bleiben gültig; der Code akzeptiert beide Formen (Abschnitt 7.4).
+  economysystem.command.balance:
+    description: Erlaubt das Anzeigen des eigenen Guthabens (/eco balance).
+    default: true
+  economysystem.command.balance.other:
+    description: Erlaubt das Anzeigen fremder Guthaben.
+    default: op
+  economysystem.command.balance.top:
+    description: Erlaubt die Bestenliste über /eco balance top.
+    default: true
+  economysystem.command.pay:
+    description: Erlaubt das Überweisen von Geld an andere Spieler (/eco pay).
+    default: true
+  economysystem.command.credit:
+    description: Erlaubt die Nutzung des Kreditsystems (/eco credit).
+    default: true
+  economysystem.command.gui:
+    description: Erlaubt das Öffnen des Wirtschafts-Menüs (/eco gui).
+    default: true
+  economysystem.command.info:
+    description: Erlaubt die Systeminformationen (/eco info).
+    default: op
+  economysystem.command.admin:
+    description: Sammelrecht für alle admin.*-Pfade (/eco admin).
+    default: op
+  economysystem.command.admin.balance:
+    description: Erlaubt die Guthabenverwaltung (/eco admin balance add|remove|set|reset).
+    default: op
+  economysystem.command.admin.credit:
+    description: Erlaubt die Kreditverwaltung (/eco admin credit list).
+    default: op
+  economysystem.command.admin.interest:
+    description: Erlaubt Zinsanzeige und Zinssatzänderung (/eco admin interest show|set).
+    default: op
+  economysystem.command.admin.reload:
+    description: Erlaubt das Neuladen der Konfiguration (/eco admin reload).
+    default: op
+  economysystem.command.admin.test:
+    description: Erlaubt die Test-Befehle unter /eco admin test (nur mit tests.enabled).
+    default: op
+  economysystem.pay.remote:
+    description: Erlaubt Überweisungen an Ziele, die nicht auf diesem Server online sind (network.transfer.mode).
+    default: op
+  economysystem.bypass.cooldown:
+    description: Ignoriert den Cooldown von Befehlen (Commands.md, Abschnitt 7.3).
+    default: op
+  economysystem.bypass.rate-limit:
+    description: Ignoriert die Mengenbegrenzung aus network.limits (Commands.md, Abschnitt 7.3).
     default: op

@@ -1,19 +1,15 @@
 package de.Minefalo.economySystem.config;
 
 import de.Minefalo.economySystem.currency.Currency;
-import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -44,17 +40,18 @@ public final class Settings {
     private Leaderboard leaderboard;
     private Notifications notifications;
     private Suggestions suggestions;
+    private Network network;
 
     public Settings(JavaPlugin plugin) {
         this.plugin = plugin;
-        this.file = new File(plugin.getDataFolder(), "settings.yml");
+        this.file = ConfigUpdater.file(plugin, "settings.yml");
         reload();
     }
 
     public void reload() {
         ConfigUpdater.update(plugin, "settings.yml");
         config = YamlConfiguration.loadConfiguration(file);
-        YamlConfiguration defaults = loadDefaults();
+        YamlConfiguration defaults = ConfigUpdater.bundled(plugin, "settings.yml");
         if (defaults != null) {
             // Fehlende Schlüssel fallen auf die Standardwerte zurück, ohne die
             // Datei (und damit ihre Kommentare) neu zu schreiben.
@@ -107,6 +104,62 @@ public final class Settings {
         this.leaderboard = readLeaderboard();
         this.notifications = readNotifications();
         this.suggestions = readSuggestions();
+        this.network = readNetwork();
+    }
+
+    /**
+     * Liest {@code network} (Abschnitt 11). Fehlende Schlüssel fallen auf die
+     * Einzelserver-Werte zurück; nur {@code READ_ONLY}, ein abweichender Scope
+     * oder ein anderer Transfer-Modus ändern das Verhalten.
+     */
+    private Network readNetwork() {
+        String id = text("network.id", "default");
+        String group = text("network.group", "default");
+        EconomyScope scope = parseEnum(EconomyScope.class, "network.economy-scope", "SHARED");
+        ServerMode mode = parseEnum(ServerMode.class, "network.mode", "FULL");
+        Invalidation invalidation = parseEnum(Invalidation.class, "network.invalidation", "TTL");
+        int cacheTtl = clamp(intValue("network.cache-ttl-seconds", 60), 0, 86_400);
+        TransferMode transferMode = parseEnum(TransferMode.class, "network.transfer.mode", "LOCAL");
+        int timeout = clamp(intValue("network.transfer.timeout-seconds", 30), 1, 600);
+
+        Limits limits = new Limits(
+                readLimit("network.limits.pay", 10, 60, 3),
+                readLimit("network.limits.credit.take", 3, 300, 10),
+                readLimit("network.limits.admin.balance", 60, 60, 0));
+
+        if (id.isBlank()) {
+            plugin.getLogger().warning("network.id ist leer - verwende 'default'.");
+            id = "default";
+        }
+        return new Network(id, group, scope, mode, invalidation, cacheTtl,
+                new Transfer(transferMode, timeout), limits);
+    }
+
+    private RateLimit readLimit(String path, int count, int seconds, int cooldown) {
+        return new RateLimit(
+                Math.max(0, intValue(path + ".count", count)),
+                Math.max(1, intValue(path + ".seconds", seconds)),
+                Math.max(0, intValue(path + ".cooldown-seconds", cooldown)));
+    }
+
+    /**
+     * Liest einen Textwert; ein unbekannter Wert wird gemeldet und durch den
+     * Standard ersetzt, statt den Start zu verhindern.
+     */
+    private String text(String path, String fallback) {
+        String raw = config.getString(path, fallback);
+        return raw == null ? fallback : raw.trim();
+    }
+
+    private <E extends Enum<E>> E parseEnum(Class<E> type, String path, String fallback) {
+        String raw = text(path, fallback);
+        try {
+            return Enum.valueOf(type, raw.toUpperCase(Locale.ROOT).replace('-', '_'));
+        } catch (IllegalArgumentException exception) {
+            plugin.getLogger().warning("Unbekannter Wert für " + path + ": '" + raw
+                    + "' - verwende " + fallback + ".");
+            return Enum.valueOf(type, fallback);
+        }
     }
 
     /**
@@ -160,7 +213,12 @@ public final class Settings {
         BigDecimal savingsFactor = positiveDecimal("interest.factors.spar", "1.3");
         BigDecimal creditFactor = positiveDecimal("interest.factors.kredit", "1.3");
         boolean notifyPlayers = booleanValue("interest.notify-players", true);
-        return new Interest(enabled, startTime, intervalMinutes, savingsFactor, creditFactor, notifyPlayers);
+        String executor = text("interest.executor", "auto");
+        if (executor.isBlank()) {
+            executor = "auto";
+        }
+        return new Interest(enabled, startTime, intervalMinutes, savingsFactor, creditFactor,
+                notifyPlayers, executor);
     }
 
     private Leaderboard readLeaderboard() {
@@ -243,32 +301,25 @@ public final class Settings {
         String key = type.configKey();
         String value = factor.stripTrailingZeros().toPlainString();
 
-        List<String> lines;
+        String before;
         try {
-            lines = new ArrayList<>(Files.readAllLines(file.toPath(), StandardCharsets.UTF_8));
+            before = Files.readString(file.toPath(), StandardCharsets.UTF_8);
         } catch (IOException exception) {
             throw new IllegalStateException("settings.yml konnte nicht gelesen werden: "
                     + exception.getMessage(), exception);
         }
 
+        List<String> lines = new ArrayList<>(List.of(before.split("\\R", -1)));
         YamlFactorEditor.writeFactor(lines, key, value);
+        String lineSeparator = before.contains("\r\n") ? "\r\n" : "\n";
+        String after = String.join(lineSeparator, lines);
 
-        Path temporary = null;
         try {
-            temporary = Files.createTempFile(file.toPath().toAbsolutePath().getParent(), "settings", ".tmp");
-            Files.write(temporary, lines, StandardCharsets.UTF_8);
-            ConfigUpdater.replaceFile(temporary, file.toPath());
+            ConfigFileWriter.writeIfChanged(file.toPath(), before, after,
+                    ConfigUpdater.backupFolder(plugin).toPath(), plugin.getLogger());
         } catch (IOException exception) {
             throw new IllegalStateException("settings.yml konnte nicht gespeichert werden: "
                     + exception.getMessage(), exception);
-        } finally {
-            if (temporary != null) {
-                try {
-                    Files.deleteIfExists(temporary);
-                } catch (IOException exception) {
-                    plugin.getLogger().warning("Temporäre settings.yml konnte nicht entfernt werden: " + exception.getMessage());
-                }
-            }
         }
 
         config.set("interest.factors." + key, factor.stripTrailingZeros());
@@ -390,20 +441,6 @@ public final class Settings {
         return fallback;
     }
 
-    private YamlConfiguration loadDefaults() {
-        try (InputStream input = plugin.getResource("settings.yml")) {
-            if (input == null) {
-                return null;
-            }
-            YamlConfiguration defaults = new YamlConfiguration();
-            defaults.load(new InputStreamReader(input, StandardCharsets.UTF_8));
-            return defaults;
-        } catch (IOException | InvalidConfigurationException exception) {
-            plugin.getLogger().warning("Standard-settings.yml konnte nicht geladen werden: " + exception.getMessage());
-            return null;
-        }
-    }
-
     private static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
     }
@@ -460,6 +497,101 @@ public final class Settings {
     }
 
     /**
+     * Netzwerkeinstellungen aus Abschnitt 11. Ohne eigene Angaben gelten die
+     * Einzelserver-Werte ({@code shared}, {@code FULL}, {@code LOCAL}).
+     */
+    public Network network() {
+        return network;
+    }
+
+    /**
+     * Wer teilt sich Guthaben? (Abschnitt 11.1)
+     */
+    public enum EconomyScope {
+        SHARED,
+        GROUP,
+        SERVER
+    }
+
+    /**
+     * Betriebsmodus dieses Servers (Abschnitt 11.8).
+     */
+    public enum ServerMode {
+        FULL,
+        READ_ONLY
+    }
+
+    /**
+     * Verbreitungsweg für Cache-Invalidierung (Abschnitt 11.3).
+     */
+    public enum Invalidation {
+        NONE,
+        TTL,
+        PLUGIN_MESSAGE,
+        REDIS
+    }
+
+    /**
+     * Zustellung von {@code /eco pay} (Abschnitt 11.2).
+     */
+    public enum TransferMode {
+        LOCAL,
+        PROXY,
+        ANY
+    }
+
+    /**
+     * @param id           Name dieses Servers in der Datenbank
+     * @param group        Gruppe für {@code economy-scope: group}
+     * @param scope        wer sich Guthaben teilt
+     * @param mode         {@code FULL} oder {@code READ_ONLY}
+     * @param invalidation Verbreitungsweg für Cache-Invalidierung
+     * @param cacheTtlSeconds Lebensdauer zwischengespeicherter Kontostände
+     * @param transfer     Zustellung von {@code /eco pay}
+     * @param limits       Rate-Limits je Spieler und Pfad
+     */
+    public record Network(String id,
+                          String group,
+                          EconomyScope scope,
+                          ServerMode mode,
+                          Invalidation invalidation,
+                          int cacheTtlSeconds,
+                          Transfer transfer,
+                          Limits limits) {
+
+        public boolean readOnly() {
+            return mode == ServerMode.READ_ONLY;
+        }
+
+        /**
+         * Kennung des Scopes in der Datenbank (Abschnitt 11.1).
+         */
+        public String scopeKey() {
+            return switch (scope) {
+                case SHARED -> "global";
+                case GROUP -> "group:" + group;
+                case SERVER -> "server:" + id;
+            };
+        }
+    }
+
+    /**
+     * @param mode           {@code LOCAL}, {@code PROXY} oder {@code ANY}
+     * @param timeoutSeconds Zeit bis zur Rückbuchung einer nicht zugestellten Überweisung
+     */
+    public record Transfer(TransferMode mode, int timeoutSeconds) {
+    }
+
+    /**
+     * Rate-Limit eines Pfades (Abschnitt 11.7).
+     */
+    public record RateLimit(int count, int seconds, int cooldownSeconds) {
+    }
+
+    public record Limits(RateLimit pay, RateLimit creditTake, RateLimit adminBalance) {
+    }
+
+    /**
      * Einstellungen des Kreditsystems.
      *
      * @param enabled              ob Spieler Kredite aufnehmen können
@@ -513,13 +645,15 @@ public final class Settings {
      * @param savingsFactor   a im Sparzins (y = a * sqrt(x))
      * @param creditFactor    a im Kreditzins für neue Kredite
      * @param notifyPlayers   Online-Spieler über ihre Gutschrift informieren
+     * @param executor        {@code auto} (Lease) oder eine Server-ID aus network.id
      */
     public record Interest(boolean enabled,
                            LocalTime startTime,
                            int intervalMinutes,
                            BigDecimal savingsFactor,
                            BigDecimal creditFactor,
-                           boolean notifyPlayers) {
+                           boolean notifyPlayers,
+                           String executor) {
 
         public BigDecimal factor(InterestType type) {
             return type == InterestType.SAVINGS ? savingsFactor : creditFactor;
@@ -527,8 +661,19 @@ public final class Settings {
 
         public Interest withFactor(InterestType type, BigDecimal factor) {
             return type == InterestType.SAVINGS
-                    ? new Interest(enabled, startTime, intervalMinutes, factor, creditFactor, notifyPlayers)
-                    : new Interest(enabled, startTime, intervalMinutes, savingsFactor, factor, notifyPlayers);
+                    ? new Interest(enabled, startTime, intervalMinutes, factor, creditFactor,
+                            notifyPlayers, executor)
+                    : new Interest(enabled, startTime, intervalMinutes, savingsFactor, factor,
+                            notifyPlayers, executor);
+        }
+
+        /**
+         * @return {@code true}, wenn dieser Server den Zyklus ausführen darf
+         *         (bei {@code auto} entscheidet zusätzlich die Lease)
+         */
+        public boolean runsOn(String serverId) {
+            return executor == null || executor.isBlank() || executor.equalsIgnoreCase("auto")
+                    || executor.equalsIgnoreCase(serverId);
         }
     }
 

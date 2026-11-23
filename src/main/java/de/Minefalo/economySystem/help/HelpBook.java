@@ -7,14 +7,9 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.event.HoverEvent;
 import org.bukkit.command.CommandSender;
-import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -30,14 +25,14 @@ public final class HelpBook {
 
     public HelpBook(EconomySystem plugin) {
         this.plugin = plugin;
-        this.file = new File(plugin.getDataFolder(), "help.yml");
+        this.file = ConfigUpdater.file(plugin, "help.yml");
         reload();
     }
 
     public void reload() {
         ConfigUpdater.update(plugin, "help.yml");
         config = YamlConfiguration.loadConfiguration(file);
-        YamlConfiguration defaults = loadDefaults();
+        YamlConfiguration defaults = ConfigUpdater.bundled(plugin, "help.yml");
         if (defaults != null) {
             config.setDefaults(defaults);
         }
@@ -69,7 +64,7 @@ public final class HelpBook {
         Map<?, ?> data = pages.get(page - 1);
         String title = data.get("title") == null ? "" : String.valueOf(data.get("title"));
         sendLine(sender, applyVariables(
-                config.getString("page-title", "&e&l%title% &8(&7Seite %page%/%pages%&8)"),
+                config.getString("page-title", "<yellow><bold>%title% <dark_gray>(<gray>Seite %page%/%pages%<dark_gray>)"),
                 title, page, pages.size()));
 
         Object lines = data.get("lines");
@@ -90,19 +85,19 @@ public final class HelpBook {
 
         if (hasPrevious) {
             navigation = navigation.append(button(
-                    config.getString("navigation.previous", "&a« Zurück"),
+                    config.getString("navigation.previous", "<green>« Zurück"),
                     config.getString("navigation.previous-hover"),
                     page - 1, label));
             navigation = navigation.append(Text.component("  "));
         }
 
         navigation = navigation.append(Text.component(applyVariables(
-                config.getString("page-indicator", "&7Seite &e%page% &7von &e%pages%"),
+                config.getString("page-indicator", "<gray>Seite <yellow>%page% <gray>von <yellow>%pages%"),
                 "", page, pages)));
 
         if (page < pages) {
             navigation = navigation.append(Text.component("  ")).append(button(
-                    config.getString("navigation.next", "&aWeiter »"),
+                    config.getString("navigation.next", "<green>Weiter »"),
                     config.getString("navigation.next-hover"),
                     page + 1, label));
         }
@@ -131,20 +126,5 @@ public final class HelpBook {
                 .replace("%title%", title)
                 .replace("%page%", String.valueOf(page))
                 .replace("%pages%", String.valueOf(pages));
-    }
-
-    private YamlConfiguration loadDefaults() {
-        try (InputStream input = plugin.getResource("help.yml")) {
-            if (input == null) {
-                return null;
-            }
-            YamlConfiguration defaults = new YamlConfiguration();
-            defaults.load(new InputStreamReader(input, StandardCharsets.UTF_8));
-            return defaults;
-        } catch (IOException | InvalidConfigurationException exception) {
-            plugin.getLogger().warning("Standard-help.yml konnte nicht geladen werden: "
-                    + exception.getMessage());
-            return null;
-        }
     }
 }

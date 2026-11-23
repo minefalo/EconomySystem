@@ -36,9 +36,9 @@ Admin-Befehlen.
   angelegt).
 - **Konfiguration mit Kommentaren** – Änderungen an Zinsfaktoren werden
   zeilenweise geschrieben, bestehende Kommentare bleiben erhalten.
-- **Automatische Config-Updates** – jede YAML-Datei trägt eine
-  `config-version`; fehlende Schlüssel und Kommentare werden beim Start
-  ergänzt, eigene Werte bleiben unangetastet.
+- **Automatischer Config-Abgleich** – beim Start und bei jedem Reload
+  werden fehlende Schlüssel und aktuelle Standardkommentare ergänzt;
+  eigene Werte, Texte, Listen und Zusatzschlüssel bleiben erhalten.
 - **Mehrseitige Hilfe** – `/economysystem-admin help` liest `help.yml` und
   blättert per Klick im Chat.
 - **PlaceholderAPI** – optional: Guthaben, Top-Liste und aktueller Sparzins
@@ -63,35 +63,44 @@ Admin-Befehlen.
    mvn clean package
    ```
 
-2. Die erzeugte Datei `target/economysystem-0.1.jar` in den
+2. Die erzeugte Datei `target/EconomySystem-v0.1.3-alpha.jar` in den
    `plugins/`-Ordner des Servers kopieren.
-3. Server starten – im Plugin-Ordner `plugins/EconomySystem/` werden
+3. Server starten – im Ordner `plugins/EconomySystem/config/` werden
    `settings.yml`, `messages.yml`, `commands.yml`, `help.yml` und `gui.yml`
    angelegt.
 4. Anpassen und mit `/economysystem-admin reload` neu laden.
 
 ## Befehle
 
+Die maßgebliche Struktur (Pfade, Permissions, Message-Keys) steht in
+`Commands.md`, Abschnitt 5. Jeder Pfad ist ein eigenes Modul; die
+Kurzbefehle unten sind nur andere Schreibweisen derselben Pfade.
+
 | Befehl | Beschreibung |
 | --- | --- |
-| `/money [Spieler]` | Zeigt das eigene oder ein fremdes Guthaben. |
-| `/money top [Seite]` | Zeigt die Spieler mit dem höchsten Guthaben. |
-| `/pay <Spieler> <Betrag>` | Überweist Geld an einen online befindlichen Spieler. |
-| `/kredit add <Betrag> <Tage>` | Nimmt einen Kredit auf. |
-| `/kredit bezahlen [Betrag]` | Zahlt offene Kredite zurück (ohne Betrag: so viel wie möglich). |
-| `/kredit info` | Zeigt Guthaben, Kreditrahmen und laufende Kredite. |
-| `/economysystem-gui [Menü]` | Öffnet das klickbare Wirtschafts-Menü (Aliase `/eco-gui`, `/egui`). |
-| `/economysystem help` | Zeigt die allgemeine Hilfe. |
-| `/economysystem-admin help [Seite]` | Zeigt die mehrseitige Admin-Hilfe. |
-| `/economysystem-admin info` | Zeigt Speicher, Währung, Zinsen und Zyklus. |
-| `/economysystem-admin reload` | Lädt alle Konfigurationen neu. |
-| `/economysystem-admin money <Spieler> add <Betrag>` | Schreibt Geld gut. |
-| `/economysystem-admin money <Spieler> remove <Betrag>` | Zieht Geld ab. |
-| `/economysystem-admin money <Spieler> set <Betrag>` | Setzt das Guthaben exakt. |
-| `/economysystem-admin money <Spieler> reset` | Setzt auf das Startguthaben zurück. |
-| `/economysystem-admin zinsen spar set <Faktor>` | Setzt den Sparzins-Faktor `a`. |
-| `/economysystem-admin zinsen kredit set <Faktor>` | Setzt den Kreditzins-Faktor `a`. |
-| `/economysystem-admin tests zins-zyklus add <Anzahl>` | Führt Zinszyklen sofort aus (nur mit `tests.enabled`). |
+| `/eco balance [<konto>]` | Zeigt das eigene oder ein fremdes Guthaben. |
+| `/eco balance top [<seite>]` | Zeigt die Spieler mit dem höchsten Guthaben. |
+| `/eco pay <konto> <betrag> [--reason <text>]` | Überweist Geld an einen online befindlichen Spieler. |
+| `/eco credit take <betrag> <tage>` | Nimmt einen Kredit auf. |
+| `/eco credit repay [<betrag>]` | Zahlt offene Kredite zurück (ohne Betrag: so viel wie möglich). |
+| `/eco credit info` | Zeigt Guthaben, Kreditrahmen und laufende Kredite. |
+| `/eco credit list` | Listet laufende Kredite mit kurzer Kredit-ID. |
+| `/eco gui [<menü>]` | Öffnet das klickbare Wirtschafts-Menü. |
+| `/eco info` | Zeigt Speicher, Währung, Zinsen und Zyklus. |
+| `/eco help [<seite>]` | Zeigt die allgemeine Hilfe. |
+| `/eco admin help [<seite>]` | Zeigt die mehrseitige Admin-Hilfe. |
+| `/eco admin balance add\|remove <konto> <betrag>` | Schreibt Geld gut bzw. zieht es ab. |
+| `/eco admin balance set <konto> <betrag> --confirm` | Setzt das Guthaben exakt. |
+| `/eco admin balance reset <konto> --confirm` | Setzt auf das Startguthaben zurück. |
+| `/eco admin credit list <konto>` | Zeigt die Kredite eines Kontos. |
+| `/eco admin interest show` | Zeigt beide Zinsfaktoren. |
+| `/eco admin interest set <savings\|credit> <faktor>` | Setzt den Spar- bzw. Kreditzins-Faktor `a`. |
+| `/eco admin reload [local]` | Lädt alle Konfigurationen neu. |
+| `/eco admin test interest-cycle add <anzahl>` | Führt Zinszyklen sofort aus (nur mit `tests.enabled`). |
+
+Kurzbefehle (unverändert gültig, rufen dieselben Pfade auf): `/money`,
+`/pay`, `/kredit`, `/economysystem`, `/economysystem-gui` und
+`/economysystem-admin` (veraltet, siehe `Commands.md`, 4.2).
 
 Beträge akzeptieren `.` und `,` als Dezimaltrennzeichen. Das maximale
 Guthaben aus der `settings.yml` wird immer beachtet.
@@ -105,8 +114,8 @@ Die Aliase stehen in `commands.yml` und können dort erweitert werden:
 | `money` | `geld`, `balance`, `coins` |
 | `pay` | `zahlen`, `ueberweisen` |
 | `kredit` | `credit`, `darlehen` |
-| `economysystem` | `es`, `ecoadmin` |
-| `economysystem-admin` | `esa`, `ecoadm` |
+| `economysystem` | `es` |
+| `economysystem-admin` | `esa`, `ecoadm`, `ecoadmin` |
 | `economysystem-gui` | `eco-gui`, `egui` |
 
 ## Berechtigungen
@@ -167,7 +176,9 @@ Hinweise:
 
 ## Konfiguration
 
-Alle Dateien liegen in `plugins/EconomySystem/`.
+Alle Konfigurationsdateien liegen in `plugins/EconomySystem/config/`.
+Daten (`accounts/`, `loans.yml`, `pending-transaction.yml`) bleiben direkt
+in `plugins/EconomySystem/`.
 
 ### `settings.yml` (Auszug)
 
@@ -221,10 +232,52 @@ suggestions:
   repay-amounts: ["10", "50", "100", "500"]
   credit-days: ["7", "30", "90"]
 
+network:
+  id: "default"                  # Name dieses Servers in der Datenbank
+  group: "default"               # Gruppe für economy-scope: group
+  economy-scope: "shared"        # shared | group | server
+  mode: "FULL"                   # FULL | READ_ONLY (nur lesen)
+  invalidation: "TTL"            # NONE | TTL | PLUGIN_MESSAGE | REDIS
+  cache-ttl-seconds: 60
+  transfer:
+    mode: "LOCAL"                # LOCAL | PROXY | ANY
+    timeout-seconds: 30
+  limits:                        # je Spieler und Pfad, im Router erzwungen
+    pay: { count: 10, seconds: 60, cooldown-seconds: 3 }
+    credit.take: { count: 3, seconds: 300, cooldown-seconds: 10 }
+    admin.balance: { count: 60, seconds: 60, cooldown-seconds: 0 }
+
 storage:
   type: YAML                     # YAML oder MYSQL
   save-interval-seconds: 300
 ```
+
+### Netzwerkbetrieb
+
+Ohne eigene Angaben verhält sich das Plugin wie ein Einzelserver (`shared`,
+`FULL`, `transfer.mode: LOCAL`).
+
+- **`mode: READ_ONLY`** (z. B. Lobby): Guthaben, Bestenliste, Kredit- und
+  Systeminformationen, Hilfe, GUI sowie `admin reload` und
+  `admin interest show` bleiben erlaubt; alles Schreibende antwortet mit
+  `error.read-only`. Die Prüfung sitzt im Router vor der Fachlogik.
+- **`transfer.mode: ANY`** erlaubt `/eco pay` an ein Ziel, das nicht auf
+  diesem Server online ist (Recht `economysystem.pay.remote`). Die Buchung
+  läuft als eine Transaktion mit eindeutigem Idempotenzschlüssel: derselbe
+  Auftrag bucht nur einmal. Das setzt `storage.type: MYSQL` voraus; im
+  YAML-Betrieb antwortet der Befehl mit `command.pay.error.remote-failed`.
+  `PROXY` braucht eine Serverliste und antwortet derzeit mit
+  `command.pay.error.no-route`.
+- **Zinszyklus:** `interest.executor: auto` lässt den Zyklus nur auf dem
+  Server laufen, der die Lease für den Scope hält; `economy_interest_runs`
+  sorgt dafür, dass jeder Zyklusschlüssel genau einmal gebucht wird.
+- **MySQL-Migration:** Beim Start legt das Plugin `accounts.revision`,
+  `economy_transfers`, `economy_audit`, `economy_locks` und
+  `economy_interest_runs` an, falls sie fehlen.
+
+Noch nicht umgesetzt: `PROXY`-Zustellung mit Serverliste, Cache-Ausbreitung
+per `PLUGIN_MESSAGE`/`REDIS`, Audit für alle schreibenden Befehle,
+`admin interest run` und `admin reload network`.
 
 ### Speicherkonsistenz
 
@@ -315,10 +368,11 @@ tests:
   aktivieren; zusätzlich ist die Permission `economysystem.tests` nötig.
 - Ist `tests.enabled` auf `false`, antwortet der Befehl nur mit einem
   Hinweis und ändert nichts.
-- Produktionsartefakte enthalten die Testbefehle gar nicht erst:
-  `mvn -Pproduction clean package` schließt die Implementierung aus. Der
-  Befehl antwortet dann unabhängig von `tests.enabled` mit dem Hinweis,
-  dass die Testbefehle deaktiviert sind.
+- Der Testpfad ist ein reguläres Modul (`/eco admin test interest-cycle
+  add <Anzahl>`, Kurzform `/economysystem-admin tests zins-zyklus add
+  <Anzahl>`) und in jedem Build enthalten. Er bleibt inert, solange
+  `tests.enabled` aus ist oder die Permission fehlt — ein gesondertes
+  Produktionsprofil gibt es nicht mehr.
 
 ### Kreditsystem
 
@@ -369,34 +423,36 @@ MySQL-Modus in der Tabelle `<table-prefix>loans`.
 
 `/economysystem-gui` (Aliase `/eco-gui`, `/egui`) öffnet ein klickbares
 Menü. Items, Slots, Materialien, Permissions, Eingaben und Befehle stehen
-in der `gui.yml`.
+in der `gui.yml`. Oben zeigt der Kopf des Spielers Guthaben und
+Kreditrahmen, darunter liegen die Aktionen; ein eigener Button öffnet das
+Kredit-Menü.
 
 ```yaml
 menus:
   main:
-    title: "&8&lWirtschaft"
+    title: "<dark_gray><bold>Wirtschaft"
     rows: 6
     items:
-      pay:
-        slot: 14
-        material: EMERALD
-        name: "&a&lGeld überweisen"
-        permission: "economysystem.pay"
-        inputs:
-          - type: player
-            prompt: "&8Spieler wählen"
-          - type: number
-            prompt: "&8Betrag"
-            min: 1
-            max: 1000000
-            step: 10
-            default: 100
-        commands:
-          - "pay {input1} {input2}"
+      guthaben:
+        slot: 4
+        material: PLAYER_HEAD
+        head: player
+        name: "<gold><bold>%player%"
+        lore:
+          - "<gray>Guthaben: <gold>%balance%"
+          - "<gray>Kreditrahmen: <yellow>%credit_limit%"
+          - "<gray>Offene Kredite: <red>%credit_debt%"
+        permission: "economysystem.balance"
+      credit:
+        slot: 22
+        material: DIAMOND
+        name: "<aqua><bold>Kredite"
+        permission: "economysystem.kredit"
+        open: "credit"
       admin:
         slot: 49
         material: NETHER_STAR
-        name: "&c&lAdmin-Menü"
+        name: "<red><bold>Admin-Menü"
         permission: "economysystem.admin"
         open: "admin"
 ```
@@ -406,8 +462,15 @@ menus:
 - Beim Klick wird der Befehl **als Spieler** ausgeführt (z. B. `/money`,
   `/pay`, `/kredit`); alle normalen Prüfungen und Permissions greifen
   weiterhin.
-- `open` öffnet statt Befehlen ein Untermenü. Das Admin-Menü hängt am
-  Stern in der unteren Reihe und ist nur mit `economysystem.admin` sichtbar.
+- `open` öffnet statt Befehlen ein Untermenü. Das Kredit-Menü bündelt
+  Aufnahme, Übersicht und Rückzahlung; das Admin-Menü hängt am Stern in der
+  unteren Reihe und ist nur mit `economysystem.admin` sichtbar.
+- `head: player` zeigt den Kopf des Spielers, der das Menü geöffnet hat.
+  In `name` und `lore` stehen dafür `%player%`, `%balance%`,
+  `%min_balance%`, `%max_balance%`, `%credit_limit%`, `%credit_debt%`,
+  `%credit_loans%`, `%credit_max_loans%` und `%credit_status%` zur
+  Verfügung. Items ohne `commands` und ohne `open` sind reine Anzeigen und
+  reagieren nicht auf Klicks.
 - `settings.default-menu` legt das Menü ohne Argument fest,
   `settings.close-on-click` schließt das Inventar vor dem Ausführen.
 - `settings.click-cooldown-ms` drosselt nur wiederholte Klicks auf
@@ -430,15 +493,16 @@ Inventare. Jeder Eintrag unter `inputs` hat einen `type` und einen
 ```yaml
 inputs:
   - type: number          # ganze Zahl
-    prompt: "&8Betrag"
+    prompt: "<dark_gray>Betrag"
     min: 1                # kleinster Wert
     max: 1000000          # größter Wert
     step: 10              # Schrittweite der Buttons und der Schiene
     default: 100          # Startwert
   - type: text
-    prompt: "&8Neuer Faktor"
+    prompt: "<dark_gray>Neuer Faktor"
+    pattern: "[0-9.]{1,12}"  # optional: Muster für die Antwort
   - type: player
-    prompt: "&8Spieler wählen"
+    prompt: "<dark_gray>Spieler wählen"
     filter: all           # all | online
     sort: name-asc        # name-asc | name-desc | balance-desc | balance-asc
 ```
@@ -446,38 +510,56 @@ inputs:
 - Die Antworten ersetzen in `commands` die Platzhalter `{input1}`,
   `{input2}` usw.; `{input}` enthält alle Antworten mit Leerzeichen
   verbunden, `{player}` den Namen des klickenden Spielers.
+- Vor dem Einsetzen wird jede Antwort geprüft: keine Leerzeichen oder
+  Steuerzeichen, kein führendes `--`, höchstens 64 Zeichen. `number` muss im
+  Bereich `min`–`max` liegen, `player` ein gültiger Spielername sein, `text`
+  zusätzlich dem optionalen `pattern` entsprechen. Sonst antwortet die GUI mit
+  `gui-input-invalid` und öffnet das Menü erneut, statt den Befehl
+  auszuführen.
 - Abbrechen ist jederzeit über die Schaltfläche bzw. `ESC` möglich; danach
   öffnet sich das vorherige Menü wieder.
 - Ältere Dateien mit `prompts` funktionieren weiter: jeder Eintrag wird als
   Text-Eingabe (Amboss) gelesen.
 
-### Konfigurationsversion
+### Automatischer Konfigurationsabgleich
 
-Alle ausgelieferten YAML-Dateien tragen eine `config-version`
-(`plugin.yml` ausgenommen). Beim Start und bei
-`/economysystem-admin reload` vergleicht das Plugin die Version der
-vorhandenen Datei mit der Version der mitgelieferten Standarddatei:
+Beim Start und bei jedem `/economysystem-admin reload` vergleicht das Plugin
+jede Datei in `plugins/EconomySystem/config/` mit der mitgelieferten
+Standarddatei (`config-version` bleibt als Metadatum erhalten):
 
 - Fehlt eine Datei, wird sie aus dem JAR angelegt.
-- Ist die vorhandene Datei **älter**, werden alle fehlenden Schlüssel samt
-  ihren Kommentaren ergänzt. **Vorhandene Werte und Kommentare werden nie
-  überschrieben.**
-- Anschließend wird die Datei einmalig neu geschrieben (Anführungszeichen
-  und Listenformat können sich dadurch leicht ändern) und die neue
-  `config-version` direkt unter dem Kopfkommentar eingetragen.
+- Fehlende Schlüssel und Blöcke werden samt ihren Standardkommentaren
+  ergänzt; Standardkommentare werden auf den aktuellen Stand gebracht. Hat
+  die Standarddatei zu einem Schlüssel keinen Kommentar, bleibt ein eigener
+  Kommentar stehen.
+- **Eigene Werte, Texte, Listen und Zusatzschlüssel bleiben unverändert.**
+  Die Reihenfolge der Schlüssel folgt der Standarddatei; eigene
+  Zusatzschlüssel bleiben am Ende ihres Abschnitts.
 - Es wird nie etwas gelöscht: nicht mehr verwendete Schlüssel bleiben
-  stehen und werden einfach ignoriert.
-- Eine höhere `config-version` als die des Plugins verhindert das Update,
-  damit eigene Anpassungen nicht durch eine ältere Standarddatei ersetzt
-  werden.
+  stehen und werden ignoriert. Einzige Ausnahme ist die GUI-Neufassung ab
+  `config-version 4`: Sie entfernt die abgelösten Hauptmenü-Items
+  `balance`, `kredit-add`, `kredit-info`, `kredit-pay` und
+  `kredit-pay-part`, damit die neuen Einträge `guthaben` und `credit`
+  greifen.
+- Vor jeder Änderung entsteht eine Sicherung unter
+  `config/backup/<datei>.vor-config-update.bak` (eine Generation). Ist der
+  Inhalt bereits aktuell, wird nicht geschrieben.
+- Fehlerhafte oder leere Dateien bleiben unverändert und werden im Log
+  gemeldet; das Plugin startet mit den Standardwerten weiter.
+- `config-version` wird auf den größeren Wert aus vorhandener Datei und
+  Standarddatei gesetzt. Ist die vorhandene Datei neuer als das Plugin,
+  bleibt sie erhalten und es erscheint eine Warnung.
+- Legacy-Farbcodes (`&a`, `&#RRGGBB`, `§`) in `messages.yml`, `help.yml`
+  und den Anzeigetexten der `gui.yml` werden in MiniMessage umgeschrieben.
 
 Weitere Dateien:
 
-- `messages.yml` – alle Nachrichten, Farben (`&`-Codes und `&#RRGGBB`).
+- `messages.yml` – alle Nachrichten, Farben im MiniMessage-Markup (z. B. `<red>` und `<#RRGGBB>`).
 - `help.yml` – Seiten der Admin-Hilfe inklusive klickbarer Navigation.
 - `commands.yml` – Aliase für alle Befehle.
 - `gui.yml` – Items, Slots, Eingaben und Befehle der Klick-Menüs.
-- `loans.yml` – gespeicherte Kredite (nur im YAML-Modus).
+- `loans.yml` – gespeicherte Kredite (nur im YAML-Modus), liegt weiterhin
+  direkt in `plugins/EconomySystem/`.
 
 ## Projektstruktur
 
@@ -499,10 +581,13 @@ src/main/java/de/Minefalo/economySystem/
 ## Entwicklung
 
 ```bash
-mvn clean package               # JAR inklusive Test-Befehlen (Entwicklung)
-mvn -Pproduction clean package  # Produktions-JAR ohne Test-Befehle
-mvn test                        # Tests ausführen
+mvn clean package  # JAR (Test-Befehle sind enthalten, aber nur mit tests.enabled aktiv)
+mvn test           # Tests ausführen
 ```
+
+Die Rechte-Matrix der Befehle (`balance.top`, `credit.*`, `admin.*` und
+`/money top`) prüft `src/test/java/…/command/PermissionMatrixTest.java`; sie
+läuft bei `mvn test` und damit auch bei jedem `package` bzw. `verify` mit.
 
 Der GitHub-Actions-Workflow `.github/workflows/build.yml` baut das Projekt
 bei jedem Push und Pull Request gegen Java 25 und lädt das JAR als Artifact

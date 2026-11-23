@@ -3,15 +3,10 @@ package de.Minefalo.economySystem.config;
 import de.Minefalo.economySystem.util.Text;
 import net.kyori.adventure.text.Component;
 import org.bukkit.command.CommandSender;
-import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 
 /**
  * Lädt die messages.yml und ersetzt Platzhalter.
@@ -24,14 +19,14 @@ public final class Messages {
 
     public Messages(JavaPlugin plugin) {
         this.plugin = plugin;
-        this.file = new File(plugin.getDataFolder(), "messages.yml");
+        this.file = ConfigUpdater.file(plugin, "messages.yml");
         reload();
     }
 
     public void reload() {
         ConfigUpdater.update(plugin, "messages.yml");
         config = YamlConfiguration.loadConfiguration(file);
-        YamlConfiguration defaults = loadDefaults();
+        YamlConfiguration defaults = ConfigUpdater.bundled(plugin, "messages.yml");
         if (defaults != null) {
             // Fehlende Schlüssel fallen auf die Standardwerte zurück, ohne die
             // Datei (und damit ihre Kommentare) neu zu schreiben.
@@ -50,7 +45,16 @@ public final class Messages {
     }
 
     /**
-     * Liefert einen Rohwert ohne Farbcodes/Prefix (z. B. "unbegrenzt").
+     * @return {@code true}, wenn der Schlüssel vorhanden ist - auch über die
+     *         mitgelieferten Standardwerte. Damit können neue Schlüssel
+     *         verwendet und alte als Fallback gelesen werden (Abschnitt 9.1).
+     */
+    public boolean has(String key) {
+        return config.getString(key) != null;
+    }
+
+    /**
+     * Liefert einen Rohwert ohne Markup/Prefix (z. B. "unbegrenzt").
      */
     public String raw(String key) {
         String value = config.getString(key);
@@ -99,19 +103,5 @@ public final class Messages {
             result = result.replace("%" + placeholders[i] + "%", placeholders[i + 1]);
         }
         return result;
-    }
-
-    private YamlConfiguration loadDefaults() {
-        try (InputStream input = plugin.getResource("messages.yml")) {
-            if (input == null) {
-                return null;
-            }
-            YamlConfiguration defaults = new YamlConfiguration();
-            defaults.load(new InputStreamReader(input, StandardCharsets.UTF_8));
-            return defaults;
-        } catch (IOException | InvalidConfigurationException exception) {
-            plugin.getLogger().warning("Standard-messages.yml konnte nicht geladen werden: " + exception.getMessage());
-            return null;
-        }
     }
 }

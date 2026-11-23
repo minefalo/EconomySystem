@@ -1,23 +1,25 @@
 package de.Minefalo.economySystem.config;
 
 import org.bukkit.configuration.ConfigurationSection;
-import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
- * Lädt die commands.yml, in der Aliase für alle Befehle registriert werden.
+ * Liest die {@code commands.yml}, in der Aliase, Synonyme, Kurzbefehle und
+ * Vorschläge stehen ({@code Commands.md}, Abschnitt 8).
+ *
+ * <p>Die Datei ändert nur Schreibweisen, niemals die Struktur. Geprüft werden
+ * die Einträge vom {@link de.Minefalo.economySystem.command.CommandRegistry},
+ * weil nur er den Befehlsbaum kennt; diese Klasse liefert die Rohdaten.</p>
  */
 public final class CommandsConfig {
 
@@ -29,14 +31,18 @@ public final class CommandsConfig {
 
     public CommandsConfig(JavaPlugin plugin) {
         this.plugin = plugin;
-        this.file = new File(plugin.getDataFolder(), "commands.yml");
+        this.file = ConfigUpdater.file(plugin, "commands.yml");
         reload();
     }
 
+    /**
+     * Lädt die Datei neu. Vorhandene Aliase bleiben unverändert; fehlende
+     * Abschnitte kommen aus der Standarddatei hinzu (Abschnitt 8.3).
+     */
     public void reload() {
         ConfigUpdater.update(plugin, "commands.yml");
         config = YamlConfiguration.loadConfiguration(file);
-        YamlConfiguration defaults = loadDefaults();
+        YamlConfiguration defaults = ConfigUpdater.bundled(plugin, "commands.yml");
         if (defaults != null) {
             // Fehlende Schlüssel fallen auf die Standardwerte zurück, ohne die
             // Datei (und damit ihre Kommentare) neu zu schreiben.
@@ -83,6 +89,76 @@ public final class CommandsConfig {
         return new ArrayList<>(aliases);
     }
 
+    /**
+     * Rohdaten des Abschnitts {@code shortcuts}: Befehlsname → Pfad.
+     */
+    public Map<String, String> shortcuts() {
+        ConfigurationSection section = config.getConfigurationSection("shortcuts");
+        Map<String, String> shortcuts = new LinkedHashMap<>();
+        if (section == null) {
+            return shortcuts;
+        }
+        for (String key : section.getKeys(false)) {
+            String path = section.getString(key + ".path");
+            if (path == null || path.isBlank()) {
+                plugin.getLogger().warning("commands.yml: shortcuts." + key
+                        + " hat keinen Pfad und wird übersprungen.");
+                continue;
+            }
+            shortcuts.put(key.toLowerCase(Locale.ROOT), path.trim());
+        }
+        return shortcuts;
+    }
+
+    /**
+     * Rohdaten des Abschnitts {@code subcommand-words}: kanonisches Wort →
+     * Schreibweisen.
+     */
+    public Map<String, List<String>> subcommandWords() {
+        ConfigurationSection section = config.getConfigurationSection("subcommand-words");
+        Map<String, List<String>> words = new LinkedHashMap<>();
+        if (section == null) {
+            return words;
+        }
+        for (String key : section.getKeys(false)) {
+            words.put(key, section.getStringList(key));
+        }
+        return words;
+    }
+
+    /**
+     * Rohdaten des Abschnitts {@code suggestions}: {@code <pfad>.<argument>} →
+     * Vorschläge.
+     */
+    public Map<String, List<String>> suggestions() {
+        ConfigurationSection section = config.getConfigurationSection("suggestions");
+        Map<String, List<String>> suggestions = new LinkedHashMap<>();
+        if (section == null) {
+            return suggestions;
+        }
+        for (String key : section.getKeys(false)) {
+            suggestions.put(key, section.getStringList(key));
+        }
+        return suggestions;
+    }
+
+    /**
+     * Vorschläge für einen Pfad. Der Schlüssel nennt zusätzlich das Argument
+     * ({@code pay.amount}); übernommen werden nur Einträge, deren Pfadteil
+     * exakt passt.
+     */
+    public List<String> suggestionsFor(String path) {
+        List<String> values = new ArrayList<>();
+        for (Map.Entry<String, List<String>> entry : suggestions().entrySet()) {
+            int separator = entry.getKey().lastIndexOf('.');
+            String owner = separator < 0 ? "" : entry.getKey().substring(0, separator);
+            if (owner.equalsIgnoreCase(path)) {
+                values.addAll(entry.getValue());
+            }
+        }
+        return values;
+    }
+
     private ConfigurationSection findCommandSection(String commandName) {
         ConfigurationSection commands = config.getConfigurationSection("commands");
         if (commands == null) {
@@ -94,20 +170,5 @@ public final class CommandsConfig {
             }
         }
         return null;
-    }
-
-    private YamlConfiguration loadDefaults() {
-        try (InputStream input = plugin.getResource("commands.yml")) {
-            if (input == null) {
-                return null;
-            }
-            YamlConfiguration defaults = new YamlConfiguration();
-            defaults.load(new InputStreamReader(input, StandardCharsets.UTF_8));
-            return defaults;
-        } catch (IOException | InvalidConfigurationException exception) {
-            plugin.getLogger().warning("Standard-commands.yml konnte nicht geladen werden: "
-                    + exception.getMessage());
-            return null;
-        }
     }
 }

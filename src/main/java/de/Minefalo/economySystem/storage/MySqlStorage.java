@@ -9,6 +9,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.SQLIntegrityConstraintViolationException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -28,6 +29,10 @@ public final class MySqlStorage implements EconomyStorage {
     private final Settings.Mysql config;
     private final String table;
     private final String loanTable;
+    private final String transferTable;
+    private final String auditTable;
+    private final String lockTable;
+    private final String runTable;
     private final String upsertSql;
     private final String loanUpsertSql;
     private final Object lock = new Object();
@@ -47,9 +52,17 @@ public final class MySqlStorage implements EconomyStorage {
         }
 
         this.table = prefix + "accounts";
-        this.upsertSql = "INSERT INTO `" + table + "` (`uuid`, `name`, `balance`, `updated_at`) "
-                + "VALUES (?, ?, ?, ?) "
-                + "ON DUPLICATE KEY UPDATE `name` = ?, `balance` = ?, `updated_at` = ?";
+        // Jede schreibende Aktion erhöht `revision` (Commands.md, 11.3).
+        this.upsertSql = "INSERT INTO `" + table
+                + "` (`uuid`, `name`, `balance`, `updated_at`, `revision`) "
+                + "VALUES (?, ?, ?, ?, 1) "
+                + "ON DUPLICATE KEY UPDATE `name` = ?, `balance` = ?, `updated_at` = ?, "
+                + "`revision` = `revision` + 1";
+
+        this.transferTable = prefix + "transfers";
+        this.auditTable = prefix + "audit";
+        this.lockTable = prefix + "locks";
+        this.runTable = prefix + "interest_runs";
 
         this.loanTable = prefix + "loans";
         this.loanUpsertSql = "INSERT INTO `" + loanTable + "` (`id`, `owner`, `owner_name`, `principal`, "
@@ -126,6 +139,8 @@ public final class MySqlStorage implements EconomyStorage {
             statement.execute(sql);
         }
 
+        createNetworkTables(current);
+
         String loans = "CREATE TABLE IF NOT EXISTS `" + loanTable + "` ("
                 + "`id` CHAR(36) NOT NULL,"
                 + "`owner` CHAR(36) NOT NULL,"
@@ -144,6 +159,96 @@ public final class MySqlStorage implements EconomyStorage {
                 + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
         try (Statement statement = current.createStatement()) {
             statement.execute(loans);
+        }
+    }
+
+    /**
+     * Legt die Tabellen für den Netzwerkbetrieb an und ergänzt
+     * {@code accounts.revision}, falls die Tabelle aus einer früheren Version
+     * stammt (Migration nach {@code Commands.md}, 11.6).
+     */
+    private void createNetworkTables(Connection current) throws SQLException {
+        addColumnIfMissing(current, "revision", "`revision` BIGINT NOT NULL DEFAULT 0");
+
+        String transfers = "CREATE TABLE IF NOT EXISTS `" + transferTable + "` ("
+                + "`id` CHAR(36) NOT NULL,"
+                + "`idempotency_key` CHAR(36) NOT NULL,"
+                + "`scope` VARCHAR(32) NOT NULL,"
+                + "`from_uuid` CHAR(36) NOT NULL,"
+                + "`to_uuid` CHAR(36) NOT NULL,"
+                + "`amount` DECIMAL(30,8) NOT NULL,"
+                + "`source_server` VARCHAR(32) NOT NULL,"
+                + "`target_server` VARCHAR(32) NULL,"
+                + "`state` ENUM('pending','applied','failed','expired') NOT NULL DEFAULT 'pending',"
+                + "`created_at` BIGINT NOT NULL,"
+                + "`applied_at` BIGINT NULL,"
+                + "PRIMARY KEY (`id`),"
+                + "UNIQUE KEY `uq_idempotency` (`idempotency_key`),"
+                + "KEY `idx_state` (`scope`, `state`)"
+                + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+
+        String audit = "CREATE TABLE IF NOT EXISTS `" + auditTable + "` ("
+                + "`id` BIGINT NOT NULL AUTO_INCREMENT,"
+                + "`tx_id` CHAR(36) NOT NULL,"
+                + "`occurred_at` BIGINT NOT NULL,"
+                + "`server_id` VARCHAR(32) NOT NULL,"
+                + "`scope` VARCHAR(32) NOT NULL,"
+                + "`actor_uuid` CHAR(36) NULL,"
+                + "`actor_name` VARCHAR(64) NULL,"
+                + "`origin` ENUM('PLAYER','CONSOLE','GUI','API','SCHEDULER') NOT NULL,"
+                + "`action` VARCHAR(48) NOT NULL,"
+                + "`target_uuid` CHAR(36) NULL,"
+                + "`target_name` VARCHAR(64) NULL,"
+                + "`amount` DECIMAL(30,8) NULL,"
+                + "`balance_after` DECIMAL(30,8) NULL,"
+                + "`reason` VARCHAR(160) NULL,"
+                + "`result` ENUM('APPLIED','REJECTED','DRY_RUN') NOT NULL,"
+                + "PRIMARY KEY (`id`),"
+                + "UNIQUE KEY `uq_tx` (`tx_id`),"
+                + "KEY `idx_scope_time` (`scope`, `occurred_at`)"
+                + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+
+        String locks = "CREATE TABLE IF NOT EXISTS `" + lockTable + "` ("
+                + "`scope` VARCHAR(32) NOT NULL,"
+                + "`holder` VARCHAR(32) NOT NULL,"
+                + "`leased_until` BIGINT NOT NULL,"
+                + "PRIMARY KEY (`scope`)"
+                + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+
+        String runs = "CREATE TABLE IF NOT EXISTS `" + runTable + "` ("
+                + "`scope` VARCHAR(32) NOT NULL,"
+                + "`cycle_key` VARCHAR(48) NOT NULL,"
+                + "`created_at` BIGINT NOT NULL,"
+                + "PRIMARY KEY (`scope`, `cycle_key`)"
+                + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+
+        try (Statement statement = current.createStatement()) {
+            statement.execute(transfers);
+            statement.execute(audit);
+            statement.execute(locks);
+            statement.execute(runs);
+        }
+    }
+
+    /**
+     * Ergänzt eine Spalte nur, wenn sie fehlt; {@code ALTER TABLE … ADD COLUMN
+     * IF NOT EXISTS} ist nicht in jeder MySQL-Version verfügbar.
+     */
+    private void addColumnIfMissing(Connection current, String column, String definition)
+            throws SQLException {
+        String query = "SELECT COUNT(*) FROM information_schema.COLUMNS"
+                + " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?";
+        try (PreparedStatement statement = current.prepareStatement(query)) {
+            statement.setString(1, table);
+            statement.setString(2, column);
+            try (ResultSet result = statement.executeQuery()) {
+                if (result.next() && result.getInt(1) > 0) {
+                    return;
+                }
+            }
+        }
+        try (Statement statement = current.createStatement()) {
+            statement.execute("ALTER TABLE `" + table + "` ADD COLUMN " + definition);
         }
     }
 
@@ -216,6 +321,31 @@ public final class MySqlStorage implements EconomyStorage {
                  ResultSet result = statement.executeQuery()) {
                 while (result.next()) {
                     accounts.add(readAccount(result));
+                }
+            } catch (SQLException exception) {
+                throw fail("laden", exception);
+            }
+        }
+        return accounts;
+    }
+
+    /**
+     * Holt die Bestenliste direkt aus der Datenbank. Ohne diese Abfrage müsste
+     * für jede Anzeige die gesamte Kontentabelle gelesen und im Speicher
+     * sortiert werden (SICHERHEITSAUDIT, ROT-2).
+     */
+    @Override
+    public List<AccountData> loadTop(int limit) {
+        String sql = "SELECT `uuid`, `name`, `balance` FROM `" + table + "` "
+                + "WHERE `balance` > 0 ORDER BY `balance` DESC, `name` ASC LIMIT ?";
+        List<AccountData> accounts = new ArrayList<>();
+        synchronized (lock) {
+            try (PreparedStatement statement = connection().prepareStatement(sql)) {
+                statement.setInt(1, Math.max(1, limit));
+                try (ResultSet result = statement.executeQuery()) {
+                    while (result.next()) {
+                        accounts.add(readAccount(result));
+                    }
                 }
             } catch (SQLException exception) {
                 throw fail("laden", exception);
@@ -402,6 +532,279 @@ public final class MySqlStorage implements EconomyStorage {
                 statement.executeUpdate();
             } catch (SQLException exception) {
                 throw fail("löschen", exception);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Netzwerkbetrieb (Commands.md, Abschnitt 11)
+    // ------------------------------------------------------------------
+
+    /**
+     * Bucht in einer Transaktion: Outbox-Zeile, Absender belasten, Empfänger
+     * gutschreiben, Status {@code applied}. Der eindeutige
+     * {@code idempotency_key} sorgt dafür, dass ein zweiter Aufruf nichts
+     * mehr ändert (11.2/11.6).
+     */
+    @Override
+    public TransferResult transfer(TransferData transfer, BigDecimal maxBalance) {
+        String insertTransfer = "INSERT INTO `" + transferTable + "` (`id`, `idempotency_key`, `scope`,"
+                + " `from_uuid`, `to_uuid`, `amount`, `source_server`, `target_server`, `state`,"
+                + " `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)";
+        String debit = "UPDATE `" + table + "` SET `balance` = `balance` - ?,"
+                + " `revision` = `revision` + 1, `updated_at` = ?"
+                + " WHERE `uuid` = ? AND `balance` >= ?";
+        String lockTarget = "SELECT `balance` FROM `" + table + "` WHERE `uuid` = ? FOR UPDATE";
+        String credit = "INSERT INTO `" + table
+                + "` (`uuid`, `name`, `balance`, `updated_at`, `revision`)"
+                + " VALUES (?, ?, ?, ?, 1)"
+                + " ON DUPLICATE KEY UPDATE `balance` = `balance` + ?,"
+                + " `revision` = `revision` + 1, `updated_at` = ?";
+        String applied = "UPDATE `" + transferTable
+                + "` SET `state` = 'applied', `applied_at` = ? WHERE `id` = ?";
+
+        synchronized (lock) {
+            Connection current = null;
+            boolean autoCommit = true;
+            try {
+                current = connection();
+                autoCommit = current.getAutoCommit();
+                current.setAutoCommit(false);
+
+                long now = System.currentTimeMillis();
+                try (PreparedStatement statement = current.prepareStatement(insertTransfer)) {
+                    statement.setString(1, transfer.id().toString());
+                    statement.setString(2, transfer.idempotencyKey());
+                    statement.setString(3, transfer.scope());
+                    statement.setString(4, transfer.from().toString());
+                    statement.setString(5, transfer.to().toString());
+                    statement.setBigDecimal(6, transfer.amount());
+                    statement.setString(7, transfer.sourceServer());
+                    statement.setString(8, transfer.targetServer());
+                    statement.setLong(9, now);
+                    statement.executeUpdate();
+                } catch (SQLIntegrityConstraintViolationException duplicate) {
+                    current.rollback();
+                    return TransferResult.DUPLICATE;
+                }
+
+                try (PreparedStatement statement = current.prepareStatement(debit)) {
+                    statement.setBigDecimal(1, transfer.amount());
+                    statement.setLong(2, now);
+                    statement.setString(3, transfer.from().toString());
+                    statement.setBigDecimal(4, transfer.amount());
+                    if (statement.executeUpdate() == 0) {
+                        current.rollback();
+                        return TransferResult.INSUFFICIENT_FUNDS;
+                    }
+                }
+
+                BigDecimal targetBalance = null;
+                try (PreparedStatement statement = current.prepareStatement(lockTarget)) {
+                    statement.setString(1, transfer.to().toString());
+                    try (ResultSet result = statement.executeQuery()) {
+                        if (result.next()) {
+                            targetBalance = result.getBigDecimal("balance");
+                        }
+                    }
+                }
+                if (targetBalance != null && maxBalance != null
+                        && targetBalance.add(transfer.amount()).compareTo(maxBalance) > 0) {
+                    current.rollback();
+                    return TransferResult.MAX_BALANCE;
+                }
+
+                try (PreparedStatement statement = current.prepareStatement(credit)) {
+                    statement.setString(1, transfer.to().toString());
+                    statement.setString(2, transfer.toName());
+                    statement.setBigDecimal(3, transfer.amount());
+                    statement.setLong(4, now);
+                    statement.setBigDecimal(5, transfer.amount());
+                    statement.setLong(6, now);
+                    statement.executeUpdate();
+                }
+
+                try (PreparedStatement statement = current.prepareStatement(applied)) {
+                    statement.setLong(1, now);
+                    statement.setString(2, transfer.id().toString());
+                    statement.executeUpdate();
+                }
+
+                current.commit();
+                return TransferResult.APPLIED;
+            } catch (SQLException exception) {
+                if (current != null) {
+                    try {
+                        current.rollback();
+                    } catch (SQLException rollbackException) {
+                        exception.addSuppressed(rollbackException);
+                    }
+                }
+                throw fail("überweisen", exception);
+            } finally {
+                if (current != null) {
+                    try {
+                        current.setAutoCommit(autoCommit);
+                    } catch (SQLException ignored) {
+                        // Verbindung wird beim nächsten Zugriff ohnehin geprüft.
+                    }
+                }
+            }
+        }
+    }
+
+    @Override
+    public void recordAudit(AuditEntry entry) {
+        String sql = "INSERT IGNORE INTO `" + auditTable + "` (`tx_id`, `occurred_at`, `server_id`,"
+                + " `scope`, `actor_uuid`, `actor_name`, `origin`, `action`, `target_uuid`,"
+                + " `target_name`, `amount`, `balance_after`, `reason`, `result`)"
+                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        synchronized (lock) {
+            try (PreparedStatement statement = connection().prepareStatement(sql)) {
+                statement.setString(1, entry.txId().toString());
+                statement.setLong(2, entry.occurredAt());
+                statement.setString(3, entry.serverId());
+                statement.setString(4, entry.scope());
+                statement.setString(5, entry.actorId() == null ? null : entry.actorId().toString());
+                statement.setString(6, entry.actorName());
+                statement.setString(7, entry.origin());
+                statement.setString(8, entry.action());
+                statement.setString(9, entry.targetId() == null ? null : entry.targetId().toString());
+                statement.setString(10, entry.targetName());
+                statement.setBigDecimal(11, entry.amount());
+                statement.setBigDecimal(12, entry.balanceAfter());
+                statement.setString(13, entry.reason());
+                statement.setString(14, entry.result().name());
+                statement.executeUpdate();
+            } catch (SQLException exception) {
+                throw fail("protokollieren", exception);
+            }
+        }
+    }
+
+    @Override
+    public List<AuditEntry> audit(String scope, int limit) {
+        String sql = "SELECT `tx_id`, `occurred_at`, `server_id`, `scope`, `actor_uuid`, `actor_name`,"
+                + " `origin`, `action`, `target_uuid`, `target_name`, `amount`, `balance_after`,"
+                + " `reason`, `result` FROM `" + auditTable + "` WHERE `scope` = ?"
+                + " ORDER BY `occurred_at` DESC, `id` DESC LIMIT ?";
+        List<AuditEntry> entries = new ArrayList<>();
+        synchronized (lock) {
+            try (PreparedStatement statement = connection().prepareStatement(sql)) {
+                statement.setString(1, scope);
+                statement.setInt(2, Math.max(1, Math.min(limit, 100)));
+                try (ResultSet rows = statement.executeQuery()) {
+                    while (rows.next()) {
+                        entries.add(new AuditEntry(
+                                UUID.fromString(rows.getString("tx_id")),
+                                rows.getLong("occurred_at"),
+                                rows.getString("server_id"),
+                                rows.getString("scope"),
+                                uuidOrNull(rows.getString("actor_uuid")),
+                                rows.getString("actor_name"),
+                                rows.getString("origin"),
+                                rows.getString("action"),
+                                uuidOrNull(rows.getString("target_uuid")),
+                                rows.getString("target_name"),
+                                rows.getBigDecimal("amount"),
+                                rows.getBigDecimal("balance_after"),
+                                rows.getString("reason"),
+                                AuditEntry.Result.valueOf(rows.getString("result"))));
+                    }
+                }
+            } catch (SQLException exception) {
+                throw fail("lesen", exception);
+            }
+        }
+        return entries;
+    }
+
+    private static UUID uuidOrNull(String value) {
+        return value == null ? null : UUID.fromString(value);
+    }
+
+    /**
+     * Holt die Lease oder verlängert sie, wenn sie frei oder abgelaufen ist
+     * (11.4). Die Prüfung passiert in derselben Anweisung, damit zwei Server
+     * nicht gleichzeitig glauben, sie hätten die Lease.
+     */
+    @Override
+    public boolean acquireLease(String scope, String holder, long ttlMillis) {
+        long now = System.currentTimeMillis();
+        long until = now + Math.max(1L, ttlMillis);
+        String sql = "INSERT INTO `" + lockTable + "` (`scope`, `holder`, `leased_until`)"
+                + " VALUES (?, ?, ?)"
+                + " ON DUPLICATE KEY UPDATE `holder` = IF(`leased_until` < ?, ?, `holder`),"
+                + " `leased_until` = IF(`leased_until` < ?, ?, `leased_until`)";
+        synchronized (lock) {
+            try (PreparedStatement statement = connection().prepareStatement(sql)) {
+                statement.setString(1, scope);
+                statement.setString(2, holder);
+                statement.setLong(3, until);
+                statement.setLong(4, now);
+                statement.setString(5, holder);
+                statement.setLong(6, now);
+                statement.setLong(7, until);
+                statement.executeUpdate();
+            } catch (SQLException exception) {
+                throw fail("reservieren", exception);
+            }
+        }
+        return lease(scope).map(LeaseInfo::holder).map(holder::equals).orElse(false);
+    }
+
+    @Override
+    public boolean renewLease(String scope, String holder, long ttlMillis) {
+        return acquireLease(scope, holder, ttlMillis);
+    }
+
+    @Override
+    public void releaseLease(String scope, String holder) {
+        String sql = "UPDATE `" + lockTable + "` SET `leased_until` = 0"
+                + " WHERE `scope` = ? AND `holder` = ?";
+        synchronized (lock) {
+            try (PreparedStatement statement = connection().prepareStatement(sql)) {
+                statement.setString(1, scope);
+                statement.setString(2, holder);
+                statement.executeUpdate();
+            } catch (SQLException exception) {
+                throw fail("freigeben", exception);
+            }
+        }
+    }
+
+    @Override
+    public Optional<LeaseInfo> lease(String scope) {
+        String sql = "SELECT `scope`, `holder`, `leased_until` FROM `" + lockTable + "`"
+                + " WHERE `scope` = ?";
+        synchronized (lock) {
+            try (PreparedStatement statement = connection().prepareStatement(sql)) {
+                statement.setString(1, scope);
+                try (ResultSet result = statement.executeQuery()) {
+                    if (!result.next()) {
+                        return Optional.empty();
+                    }
+                    return Optional.of(new LeaseInfo(result.getString("scope"),
+                            result.getString("holder"), result.getLong("leased_until")));
+                }
+            } catch (SQLException exception) {
+                throw fail("lesen", exception);
+            }
+        }
+    }
+
+    @Override
+    public boolean claimInterestRun(String scope, String cycleKey) {
+        String sql = "INSERT IGNORE INTO `" + runTable + "` (`scope`, `cycle_key`, `created_at`)"
+                + " VALUES (?, ?, ?)";
+        synchronized (lock) {
+            try (PreparedStatement statement = connection().prepareStatement(sql)) {
+                statement.setString(1, scope);
+                statement.setString(2, cycleKey);
+                statement.setLong(3, System.currentTimeMillis());
+                return statement.executeUpdate() == 1;
+            } catch (SQLException exception) {
+                throw fail("reservieren", exception);
             }
         }
     }

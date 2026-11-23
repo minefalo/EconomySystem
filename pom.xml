@@ -5,8 +5,8 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>de.Minefalo</groupId>
-    <artifactId>economysystem</artifactId>
-    <version>0.1</version>
+    <artifactId>EconomySystem</artifactId>
+    <version>v0.1.3-alpha</version>
     <packaging>jar</packaging>
 
     <name>EconomySystem</name>
@@ -55,6 +55,11 @@
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
                 <version>3.5.3</version>
                 <executions>
@@ -92,37 +97,10 @@
         </repository>
     </repositories>
 
-    <profiles>
-        <profile>
-            <id>production</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-compiler-plugin</artifactId>
-                        <configuration>
-                            <excludes>
-                                <!-- Test-Befehle verändern echte Kontostände und
-                                     gehören nicht in Produktionsartefakte. -->
-                                <exclude>**/command/tests/InterestCycleTestCommand.java</exclude>
-                            </excludes>
-                        </configuration>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-jar-plugin</artifactId>
-                        <configuration>
-                            <excludes>
-                                <!-- Auch eine alte Klassendatei aus einem früheren
-                                     Entwicklungs-Build darf nicht ins JAR gelangen. -->
-                                <exclude>de/Minefalo/economySystem/command/tests/InterestCycleTestCommand.class</exclude>
-                            </excludes>
-                        </configuration>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-    </profiles>
+    <!-- Der Testpfad admin.test.interest-cycle ist ein reguläres Modul
+         (Commands.md, 15.5) und wird nicht mehr aus dem Build ausgeschlossen.
+         Er bleibt inert, solange tests.enabled in der settings.yml aus ist
+         oder das Recht economysystem.tests fehlt. -->
 
     <dependencies>
         <dependency>
@@ -136,6 +114,14 @@
             <artifactId>placeholderapi</artifactId>
             <version>2.12.3</version>
             <scope>provided</scope>
+        </dependency>
+
+        <!-- Unit-Tests: Rechte-Matrix der Befehle (Commands.md, Abschnitt 7). -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.10.2</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 </project>

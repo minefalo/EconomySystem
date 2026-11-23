@@ -14,7 +14,8 @@ final class GuiHolder implements InventoryHolder {
     enum Kind {
         MENU,
         SLIDER,
-        PICKER
+        PICKER,
+        CONFIRM
     }
 
     private final Kind kind;
@@ -35,6 +36,13 @@ final class GuiHolder implements InventoryHolder {
 
     static GuiHolder input(Kind kind, GuiSession session) {
         return new GuiHolder(kind, null, session);
+    }
+
+    /**
+     * Bestätigungsdialog vor einer bestätigungspflichtigen Aktion.
+     */
+    static GuiHolder confirm() {
+        return new GuiHolder(Kind.CONFIRM, null, null);
     }
 
     Kind kind() {

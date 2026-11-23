@@ -31,3 +31,6 @@ accounts/
 *.log
 
 AGENT.md
+SICHERHEITSAUDIT.md
+
+.freebuff/

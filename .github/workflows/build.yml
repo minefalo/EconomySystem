@@ -29,16 +29,15 @@ jobs:
           java-version: '25'
           cache: maven
 
+      # verify führt die Unit-Tests aus (u. a. die Rechte-Matrix der Befehle)
+      # und baut anschließend das JAR.
       - name: Build with Maven
         run: mvn -B -ntp verify
-
-      - name: Build production JAR
-        run: mvn -B -ntp -Pproduction clean package
 
       - name: Upload plugin JAR
         uses: actions/upload-artifact@v7
         with:
           name: EconomySystem
-          path: target/economysystem-*.jar
+          path: target/EconomySystem-*.jar
           if-no-files-found: error
           retention-days: 30
