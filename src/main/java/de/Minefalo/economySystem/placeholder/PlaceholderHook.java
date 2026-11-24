@@ -55,9 +55,10 @@ public final class PlaceholderHook {
     }
 
     /**
-     * Verwirft zwischengespeicherte Werte nach einem Konfigurations-Reload.
+     * Verwirft zwischengespeicherte Werte und startet die Top-Liste nach einem
+     * Konfigurations-Reload mit den aktuellen Einstellungen neu.
      */
     public void reload() {
-        data.clear();
+        data.reload();
     }
 }

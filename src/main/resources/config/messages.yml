@@ -205,6 +205,12 @@ info:
   - "<gray>Sparzins: <yellow>%interest-savings% <gray>(y = a·√x)"
   - "<gray>Kreditzins: <yellow>%interest-credit%"
   - "<gray>Zinszyklus: <yellow>%interest-cycle%"
+  - "<gray>Vault: <yellow>%vault%"
+
+vault-status-missing: "nicht installiert"
+vault-status-disabled: "deaktiviert"
+vault-status-failed: "Registrierung fehlgeschlagen"
+vault-status-active: "aktiv (%priority%)"
 
 balance-reset: "<green>Das Guthaben von <yellow>%player% <green>wurde auf das Startguthaben von <gold>%balance% <green>zurückgesetzt."
 interest-set: "<green>Der %type% <green>wurde auf <gold>%factor% <green>gesetzt."

@@ -26,6 +26,9 @@ public final class ConfigFileWriter {
     /** Endung der Sicherung, die vor jedem Schreibvorgang entsteht. */
     static final String BACKUP_SUFFIX = ".vor-config-update.bak";
 
+    /** Obergrenze aus {@code config.backup-count}. */
+    private static final int MAX_BACKUPS = 20;
+
     private ConfigFileWriter() {
     }
 
@@ -43,6 +46,18 @@ public final class ConfigFileWriter {
      */
     public static boolean writeIfChanged(Path target, String before, String after,
                                          Path backupDir, Logger logger) throws IOException {
+        return writeIfChanged(target, before, after, backupDir, 1, logger);
+    }
+
+    /**
+     * Wie {@link #writeIfChanged(Path, String, String, Path, Logger)}, hält
+     * aber bis zu {@code backupCount} Sicherungen der Datei vor. Die neueste
+     * Sicherung behält den bisherigen Dateinamen; ältere liegen als
+     * {@code .1}, {@code .2} ... daneben.
+     */
+    public static boolean writeIfChanged(Path target, String before, String after,
+                                         Path backupDir, int backupCount, Logger logger)
+            throws IOException {
         Objects.requireNonNull(target, "Die Konfigurationsdatei darf nicht null sein.");
         Objects.requireNonNull(before, "Der bisherige Inhalt darf nicht null sein.");
         Objects.requireNonNull(after, "Der neue Inhalt darf nicht null sein.");
@@ -69,7 +84,7 @@ public final class ConfigFileWriter {
                 channel.force(true);
             }
 
-            backup(target, backupDir);
+            backup(target, backupDir, backupCount);
 
             try {
                 Files.move(temporary, target,
@@ -87,12 +102,45 @@ public final class ConfigFileWriter {
 
     /**
      * Kopiert den bisherigen Inhalt nach
-     * {@code <backupDir>/<datei>.vor-config-update.bak}. Eine ältere Sicherung
-     * derselben Datei wird ersetzt.
+     * {@code <backupDir>/<datei>.vor-config-update.bak} und hält bis zu
+     * {@code backupCount} Generationen vor. Ältere Sicherungen liegen als
+     * {@code .1}, {@code .2} ... daneben.
      */
-    private static void backup(Path target, Path backupDir) throws IOException {
+    private static void backup(Path target, Path backupDir, int backupCount) throws IOException {
         Files.createDirectories(backupDir);
-        Path backup = backupDir.resolve(target.getFileName() + BACKUP_SUFFIX);
-        Files.copy(target, backup, StandardCopyOption.REPLACE_EXISTING);
+        int count = Math.max(1, backupCount);
+        Path newest = backupDir.resolve(target.getFileName() + BACKUP_SUFFIX);
+        if (count == 1) {
+            Files.copy(target, newest, StandardCopyOption.REPLACE_EXISTING);
+            for (int index = 1; index <= MAX_BACKUPS; index++) {
+                Files.deleteIfExists(numbered(target, backupDir, index));
+            }
+            return;
+        }
+
+        Files.deleteIfExists(numbered(target, backupDir, count - 1));
+        for (int index = count - 2; index >= 1; index--) {
+            Path source = numbered(target, backupDir, index);
+            if (Files.exists(source)) {
+                Files.move(source, numbered(target, backupDir, index + 1),
+                        StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
+        if (Files.exists(newest)) {
+            Files.move(newest, numbered(target, backupDir, 1),
+                    StandardCopyOption.REPLACE_EXISTING);
+        }
+        Files.copy(target, newest, StandardCopyOption.REPLACE_EXISTING);
+
+        // Nach unten korrigierte Einstellungen entfernen auch die zu vielen
+        // Generationen, statt sie liegen zu lassen.
+        for (int index = count; index <= MAX_BACKUPS; index++) {
+            Files.deleteIfExists(numbered(target, backupDir, index));
+        }
+    }
+
+    private static Path numbered(Path target, Path backupDir, int index) {
+        return backupDir.resolve(target.getFileName() + ".vor-config-update."
+                + index + ".bak");
     }
 }

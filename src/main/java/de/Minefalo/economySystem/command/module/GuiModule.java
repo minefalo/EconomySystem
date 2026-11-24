@@ -46,17 +46,6 @@ public final class GuiModule extends AbstractModule {
     }
 
     /**
-     * Das Menü lädt für die Spielerauswahl den Kontobestand. Zwei Sekunden
-     * Mindestabstand verhindern, dass ein Makro diese Last ungedrosselt
-     * auslöst (SICHERHEITSAUDIT, ROT-2); {@code economysystem.bypass.cooldown}
-     * hebt den Abstand auf.
-     */
-    @Override
-    public long cooldownMillis() {
-        return 2_000L;
-    }
-
-    /**
      * Lädt das Konto, damit der Spielerkopf im Menü sofort Guthaben und
      * Kreditwerte zeigt.
      */

@@ -22,6 +22,7 @@ import de.Minefalo.economySystem.placeholder.PlaceholderHook;
 import de.Minefalo.economySystem.storage.EconomyStorage;
 import de.Minefalo.economySystem.storage.StorageException;
 import de.Minefalo.economySystem.storage.StorageFactory;
+import de.Minefalo.economySystem.vault.VaultHook;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.List;
@@ -38,6 +39,9 @@ public final class EconomySystem extends JavaPlugin {
     private CreditService creditService;
     private InterestScheduler interestScheduler;
     private PlaceholderHook placeholderHook;
+    private VaultHook vaultHook;
+    private VaultState vaultState = VaultState.MISSING;
+    private Settings.VaultPriority vaultPriority;
     private CommandRegistry commandRegistry;
 
     @Override
@@ -104,6 +108,7 @@ public final class EconomySystem extends JavaPlugin {
         interestScheduler.start();
 
         setupPlaceholders();
+        setupVault();
 
         getLogger().info("EconomySystem aktiviert (Speicher: " + storage.name()
                 + ", Währung: " + settings.currency().name() + ").");
@@ -123,6 +128,53 @@ public final class EconomySystem extends JavaPlugin {
             placeholderHook = null;
             getLogger().warning("PlaceholderAPI konnte nicht eingebunden werden: " + throwable);
         }
+    }
+
+    /**
+     * Bindet Vault ein, sofern es installiert und in der settings.yml aktiviert
+     * ist. Alle Vault-Klassen werden erst hier geladen; ohne Vault bleibt das
+     * Plugin unverändert.
+     */
+    private void setupVault() {
+        vaultPriority = null;
+        if (getServer().getPluginManager().getPlugin("Vault") == null) {
+            vaultState = VaultState.MISSING;
+            getLogger().info("Vault nicht gefunden - die Vault-Anbindung ist deaktiviert.");
+            return;
+        }
+        if (!settings.vault().enabled()) {
+            vaultState = VaultState.DISABLED;
+            getLogger().info("Die Vault-Anbindung ist in der settings.yml deaktiviert.");
+            return;
+        }
+
+        try {
+            vaultHook = new VaultHook(this);
+            vaultHook.register();
+            vaultPriority = settings.vault().priority();
+            vaultState = VaultState.ACTIVE;
+            getLogger().info("Vault-Anbindung registriert (Priorität " + vaultPriority + ").");
+        } catch (Throwable throwable) {
+            vaultHook = null;
+            vaultState = VaultState.FAILED;
+            getLogger().warning("Vault konnte nicht eingebunden werden: " + throwable);
+        }
+    }
+
+    /**
+     * Meldet die Vault-Registrierung ab und wendet die aktuellen Einstellungen
+     * erneut an (z. B. nach {@code /eco admin reload}).
+     */
+    private void reloadVault() {
+        if (vaultHook != null) {
+            try {
+                vaultHook.unregister();
+            } catch (Throwable throwable) {
+                getLogger().warning("Vault-Anbindung konnte nicht abgemeldet werden: " + throwable);
+            }
+            vaultHook = null;
+        }
+        setupVault();
     }
 
     private boolean registerCommands() {
@@ -156,6 +208,14 @@ public final class EconomySystem extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (vaultHook != null) {
+            try {
+                vaultHook.unregister();
+            } catch (Throwable throwable) {
+                getLogger().warning("Vault-Anbindung konnte nicht abgemeldet werden: " + throwable);
+            }
+            vaultHook = null;
+        }
         if (placeholderHook != null) {
             placeholderHook.unregister();
             placeholderHook = null;
@@ -211,6 +271,7 @@ public final class EconomySystem extends JavaPlugin {
         if (placeholderHook != null) {
             placeholderHook.reload();
         }
+        reloadVault();
         if (interestScheduler != null) {
             interestScheduler.reload();
         }
@@ -251,5 +312,29 @@ public final class EconomySystem extends JavaPlugin {
         if (placeholderHook != null) {
             placeholderHook.reload();
         }
+    }
+
+    /**
+     * Zustand der Vault-Anbindung für {@code /eco info} und das Log.
+     */
+    public VaultState vaultState() {
+        return vaultState;
+    }
+
+    /**
+     * @return die aktive Vault-Priorität oder {@code null}, wenn nicht aktiv
+     */
+    public Settings.VaultPriority vaultPriority() {
+        return vaultPriority;
+    }
+
+    /**
+     * Zustand der optionalen Vault-Anbindung.
+     */
+    public enum VaultState {
+        MISSING,
+        DISABLED,
+        FAILED,
+        ACTIVE
     }
 }

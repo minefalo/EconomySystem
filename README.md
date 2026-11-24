@@ -43,6 +43,9 @@ Admin-Befehlen.
   blättert per Klick im Chat.
 - **PlaceholderAPI** – optional: Guthaben, Top-Liste und aktueller Sparzins
   als Platzhalter für Scoreboards, TAB & Co.
+- **Vault** – optional: EconomySystem stellt seine Wirtschaft als
+  Vault-Anbieter bereit, sodass Shops, Scoreboards und andere
+  Vault-kompatible Plugins Guthaben lesen und schreiben können.
 - **Aliase & Reload** – zusätzliche Befehlsnamen über `commands.yml`,
   `/economysystem-admin reload` lädt alle Konfigurationen neu.
 
@@ -54,6 +57,7 @@ Admin-Befehlen.
 | Java | 25 |
 | Maven (nur zum Bauen) | 3.9+ |
 | PlaceholderAPI | optional |
+| Vault | optional (1.7+) |
 
 ## Installation
 
@@ -168,11 +172,59 @@ Hinweise:
   Variante `%economysystem_money%` nutzen.
 - Beträge werden mit dem konfigurierten `currency.format` ausgegeben;
   `_raw` liefert den reinen `BigDecimal`-String.
-- Die Top-Liste umfasst 50 Plätze und wird alle 60 Sekunden asynchron neu
-  berechnet (auch offline gespeicherte Konten).
-- Offline-Guthaben werden 30 Sekunden zwischengespeichert; Online-Spieler
-  und bereits geladene Konten werden immer live aus dem Cache gelesen.
+- Die Top-Liste umfasst standardmäßig 50 Plätze und wird alle 60 Sekunden
+  asynchron neu berechnet (auch offline gespeicherte Konten). Beides ist
+  über `placeholder.top-size` und `placeholder.top-refresh-seconds`
+  einstellbar.
+- Offline-Guthaben werden standardmäßig 30 Sekunden zwischengespeichert
+  (`placeholder.cache-ttl-seconds`); Online-Spieler und bereits geladene
+  Konten werden immer live aus dem Cache gelesen.
 - Der Sparzins ist ein **absoluter Betrag** (`y = a · √x`), kein Prozentwert.
+
+## Vault (optional)
+
+Vault wird über `softdepend` erkannt. EconomySystem meldet sich als
+**Wirtschaftsanbieter** an, damit Shops, Scoreboards (etwa über
+`%vault_eco_balance%`), Quest- und Economy-Erweiterungen Guthaben lesen
+und schreiben können. Ohne Vault startet EconomySystem unverändert;
+Vault-Klassen werden dann nicht geladen. Umgekehrt wird kein fremder
+Economy-Anbieter übernommen – EconomySystem bleibt die maßgebliche
+Wirtschaft, alle eigenen Befehle, GUIs, Kredite und Zinsen bleiben gleich.
+
+- **Aktivierung:** `vault.enabled` (Standard `true`). Mit `enabled: false`
+  bleibt die Registrierung aus, etwa wenn ein anderes Plugin die
+  Vault-Wirtschaft stellen soll. `vault.priority` legt die Priorität fest
+  (`LOWEST` … `HIGHEST`, Standard `HIGH`). Änderungen greifen nach
+  `/eco admin reload`.
+- **Beträge:** Vault arbeitet mit `double`, intern bleibt alles
+  `BigDecimal`. Eingehende Beträge werden mit `BigDecimal.valueOf`
+  übernommen und auf `currency.decimals` gerundet; `NaN`, unendliche,
+  negative und auf 0 gerundete Beträge werden abgelehnt (`FAILURE`).
+- **Lesen:** Geladene Konten kommen direkt aus dem Cache, sonst wird das
+  vorhandene Konto über den Speicher-Executor geladen. Unbekannte Konten
+  liefern `0`, es wird **kein** Konto angelegt.
+- **Schreiben:** `depositPlayer` und `withdrawPlayer` beachten das
+  Maximalguthaben aus `currency.max-balance`. Eine Einzahlung löst – wie
+  jede Einnahme – die automatische Kredit-Tilgung aus. Unbekannte
+  UUID-Konten werden dabei mit dem Startguthaben angelegt.
+- **READ_ONLY:** Im Modus `network.mode: READ_ONLY` bleiben Lesezugriffe
+  erlaubt; alle Vault-Buchungen antworten mit `FAILURE`.
+- **Banken und Welten:** Bankkonten gibt es im Plugin nicht
+  (`hasBankSupport()` = `false`, Bankmethoden `NOT_IMPLEMENTED`). Welten
+  werden ignoriert, weil die Wirtschaft global ist.
+- **Namen:** `OfflinePlayer`-Varianten arbeiten mit der UUID. Die
+  String-Varianten lösen nur bereits bekannte Konten auf (Cache oder
+  Speicher) und legen keine Konten per Namen an.
+- **Threads und Fristen:** Buchungen aus fremden Threads werden über
+  `callSyncMethod` auf den Haupt-Thread geholt; Ladevorgänge warten
+  begrenzt auf den Storage-Executor. Beides ist auf `vault.timeout-ms`
+  (Standard 3000, Bereich 500–30000) begrenzt; bei Zeitüberschreitung
+  antwortet Vault mit `FAILURE`.
+- **Anzeige:** `format`, `currencyNamePlural` und `fractionalDigits`
+  stammen aus der Währungs-Konfiguration. `currency-name-singular`
+  (leer = `currency.name`) legt den Einzahlungsnamen fest.
+- **Status:** `/eco info` zeigt „nicht installiert“, „deaktiviert“,
+  „Registrierung fehlgeschlagen“ oder „aktiv (Priorität)“.
 
 ## Konfiguration
 
@@ -183,8 +235,11 @@ in `plugins/EconomySystem/`.
 ### `settings.yml` (Auszug)
 
 ```yaml
+time-zone: ""                    # leer = Serverzeitzone
+
 tests:
   enabled: false                 # Test-Befehle (nur auf Testservern!)
+  max-cycles: 1000               # Obergrenze der Simulation
 
 currency:
   name: "Coins"
@@ -200,7 +255,7 @@ currency:
 
 interest:
   enabled: true
-  start-time: "00:01"            # erster Lauf (Serverzeit)
+  start-time: "00:01"            # erster Lauf (Zeit in time-zone)
   interval-minutes: 1440         # 1440 = täglich
   notify-players: true           # persönliche Gutschrift im Chat
   factors:
@@ -221,6 +276,20 @@ credits:
 leaderboard:
   page-size: 10                  # Einträge pro Seite bei /money top
   max-entries: 100               # maximal geladene Einträge
+  include-zero-balances: false   # auch Konten mit Guthaben 0
+
+placeholder:
+  cache-ttl-seconds: 30          # Cache für Offline-Guthaben
+  negative-cache-ttl-seconds: 10 # Cache für "kein Konto"
+  cache-retention-seconds: 300   # Aufräumalter des Caches
+  top-size: 50                   # Plätze der Top-Liste
+  top-refresh-seconds: 60        # Aktualisierungsintervall
+
+vault:
+  enabled: true                  # als Vault-Anbieter registrieren
+  priority: HIGH                 # LOWEST | LOW | NORMAL | HIGH | HIGHEST
+  timeout-ms: 3000               # Frist für Vault-Zugriffe
+  currency-name-singular: ""     # leer = currency.name
 
 notifications:
   balance-on-join: true
@@ -237,20 +306,48 @@ network:
   group: "default"               # Gruppe für economy-scope: group
   economy-scope: "shared"        # shared | group | server
   mode: "FULL"                   # FULL | READ_ONLY (nur lesen)
-  invalidation: "TTL"            # NONE | TTL | PLUGIN_MESSAGE | REDIS
-  cache-ttl-seconds: 60
+  invalidation: "TTL"            # derzeit ohne Wirkung
+  cache-ttl-seconds: 60          # derzeit ohne Wirkung
+  lease-ttl-seconds: 300         # Lease des Zinszyklus
   transfer:
     mode: "LOCAL"                # LOCAL | PROXY | ANY
-    timeout-seconds: 30
+    timeout-seconds: 30          # derzeit ohne Wirkung
   limits:                        # je Spieler und Pfad, im Router erzwungen
     pay: { count: 10, seconds: 60, cooldown-seconds: 3 }
-    credit.take: { count: 3, seconds: 300, cooldown-seconds: 10 }
-    admin.balance: { count: 60, seconds: 60, cooldown-seconds: 0 }
+    credit:
+      take: { count: 3, seconds: 300, cooldown-seconds: 10 }
+    admin:
+      balance: { count: 60, seconds: 60, cooldown-seconds: 0 }
+    gui: { count: 0, seconds: 60, cooldown-seconds: 2 }
+    balance:
+      top: { count: 0, seconds: 60, cooldown-seconds: 2 }
+
+audit:
+  enabled: true                  # Audit für Fernbuchungen (MySQL)
+  retention-days: 0              # 0 = unbegrenzt
 
 storage:
   type: YAML                     # YAML oder MYSQL
   save-interval-seconds: 300
+  shutdown-timeout-seconds: 60   # Wartezeit beim Stoppen
+  mysql:
+    retry-seconds: 5             # Wartezeit nach Verbindungsfehler
+
+config:
+  backup-count: 1                # Sicherungen je Konfigurationsdatei
+
+commands:
+  reason-max-length: 160         # Obergrenze der Audit-Spalte
 ```
+
+Die Gruppen unter `network.limits` sind verschachtelt (`credit:` → `take:`);
+ältere Schlüssel wie `credit.take` mit Punkt im Namen werden nicht mehr
+ausgewertet. `time-zone` legt die Zeitzone für `interest.start-time`, den
+Cycle-Key und die Kredit-Fälligkeiten fest. Leer bedeutet Serverzeitzone; im Netzwerk
+müssen alle Server dieselbe Zone verwenden. `storage.mysql.retry-seconds`
+(Standard 5) steuert die Wartezeit nach einem Verbindungsfehler.
+`leaderboard.include-zero-balances` nimmt auch Konten mit Guthaben 0 in
+`/money top` auf; Platzhalter bleiben bei positiven Guthaben.
 
 ### Netzwerkbetrieb
 
@@ -270,14 +367,21 @@ Ohne eigene Angaben verhält sich das Plugin wie ein Einzelserver (`shared`,
   `command.pay.error.no-route`.
 - **Zinszyklus:** `interest.executor: auto` lässt den Zyklus nur auf dem
   Server laufen, der die Lease für den Scope hält; `economy_interest_runs`
-  sorgt dafür, dass jeder Zyklusschlüssel genau einmal gebucht wird.
+  sorgt dafür, dass jeder Zyklusschlüssel genau einmal gebucht wird. Die
+  Lease-Laufzeit steht in `network.lease-ttl-seconds` (Standard 300).
+- **Audit:** `audit.enabled` schaltet die Einträge für Fernbuchungen,
+  `audit.retention-days` räumt ältere Einträge des aktuellen Scopes täglich
+  auf (0 = unbegrenzt).
 - **MySQL-Migration:** Beim Start legt das Plugin `accounts.revision`,
   `economy_transfers`, `economy_audit`, `economy_locks` und
   `economy_interest_runs` an, falls sie fehlen.
 
 Noch nicht umgesetzt: `PROXY`-Zustellung mit Serverliste, Cache-Ausbreitung
 per `PLUGIN_MESSAGE`/`REDIS`, Audit für alle schreibenden Befehle,
-`admin interest run` und `admin reload network`.
+`admin interest run` und `admin reload network`. Die Schlüssel
+`network.cache-ttl-seconds`, `network.invalidation` und
+`network.transfer.timeout-seconds` werden derzeit nur gelesen, aber noch
+nicht angewendet.
 
 ### Speicherkonsistenz
 
@@ -358,8 +462,8 @@ tests:
 /economysystem-admin tests zins-zyklus add <Anzahl>
 ```
 
-- Führt den Zinszyklus sofort `<Anzahl>`-mal aus (1 – 1000) und simuliert
-  damit vergangene Zyklen.
+- Führt den Zinszyklus sofort `<Anzahl>`-mal aus (1 –
+  `tests.max-cycles`, Standard 1000) und simuliert damit vergangene Zyklen.
 - Jeder Lauf baut auf dem Guthaben des vorherigen auf, das Wachstum
   entspricht also mehreren echten Zyklen.
 - Verwendet den aktuellen Sparzins-Faktor und ist nur verfügbar, wenn
@@ -368,6 +472,8 @@ tests:
   aktivieren; zusätzlich ist die Permission `economysystem.tests` nötig.
 - Ist `tests.enabled` auf `false`, antwortet der Befehl nur mit einem
   Hinweis und ändert nichts.
+- Der GUI-Regler in der `gui.yml` bleibt bei maximal 1000 Zyklen; höhere
+  Werte sind nur über den Befehl möglich.
 - Der Testpfad ist ein reguläres Modul (`/eco admin test interest-cycle
   add <Anzahl>`, Kurzform `/economysystem-admin tests zins-zyklus add
   <Anzahl>`) und in jedem Build enthalten. Er bleibt inert, solange
@@ -542,8 +648,10 @@ Standarddatei (`config-version` bleibt als Metadatum erhalten):
   `kredit-pay-part`, damit die neuen Einträge `guthaben` und `credit`
   greifen.
 - Vor jeder Änderung entsteht eine Sicherung unter
-  `config/backup/<datei>.vor-config-update.bak` (eine Generation). Ist der
-  Inhalt bereits aktuell, wird nicht geschrieben.
+  `config/backup/<datei>.vor-config-update.bak`. `config.backup-count`
+  (1 – 20) legt fest, wie viele Generationen je Datei bleiben; ältere
+  Sicherungen liegen als `.1`, `.2` … daneben. Ist der Inhalt bereits
+  aktuell, wird nicht geschrieben.
 - Fehlerhafte oder leere Dateien bleiben unverändert und werden im Log
   gemeldet; das Plugin startet mit den Standardwerten weiter.
 - `config-version` wird auf den größeren Wert aus vorhandener Datei und
@@ -575,6 +683,7 @@ src/main/java/de/Minefalo/economySystem/
 ├── listener/     Join-Handling
 ├── placeholder/  PlaceholderAPI-Erweiterungen
 ├── storage/      YAML- und MySQL-Speicher
+├── vault/        Vault-Anbindung (optional)
 └── util/         Text-/Farb-Helfer
 ```
 

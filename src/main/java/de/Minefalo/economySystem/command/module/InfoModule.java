@@ -51,6 +51,13 @@ public final class InfoModule extends AbstractModule {
                 ? "alle " + interest.intervalMinutes() + " Min. ab "
                         + interest.startTime().format(TIME_FORMAT)
                 : messages.raw("disabled");
+        String vault = switch (plugin.vaultState()) {
+            case MISSING -> messages.raw("vault-status-missing");
+            case DISABLED -> messages.raw("vault-status-disabled");
+            case FAILED -> messages.raw("vault-status-failed");
+            case ACTIVE -> messages.raw("vault-status-active")
+                    .replace("%priority%", String.valueOf(plugin.vaultPriority()));
+        };
 
         messages.sendList(context.sender(), "info",
                 "version", plugin.getPluginMeta().getVersion(),
@@ -66,7 +73,8 @@ public final class InfoModule extends AbstractModule {
                 "credits", plugin.settings().credits().enabled() ? messages.raw("enabled") : messages.raw("disabled"),
                 "interest-savings", interest.savingsFactor().stripTrailingZeros().toPlainString(),
                 "interest-credit", interest.creditFactor().stripTrailingZeros().toPlainString(),
-                "interest-cycle", cycle);
+                "interest-cycle", cycle,
+                "vault", vault);
         return CommandResult.handled();
     }
 }

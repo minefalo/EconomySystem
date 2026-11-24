@@ -1,6 +1,7 @@
 package de.Minefalo.economySystem.config;
 
 import de.Minefalo.economySystem.currency.Currency;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -10,7 +11,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.time.DateTimeException;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -41,6 +44,14 @@ public final class Settings {
     private Notifications notifications;
     private Suggestions suggestions;
     private Network network;
+    private ZoneId zoneId;
+    private Placeholders placeholders;
+    private Vault vault;
+    private Audit audit;
+    private int shutdownTimeoutSeconds;
+    private int backupCount;
+    private int reasonMaxLength;
+    private int testMaxCycles;
 
     public Settings(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -49,7 +60,9 @@ public final class Settings {
     }
 
     public void reload() {
-        ConfigUpdater.update(plugin, "settings.yml");
+        // Die Anzahl der Sicherungen steht in der Datei, die gerade geprüft
+        // wird. Deshalb vor dem Abgleich roh lesen.
+        ConfigUpdater.update(plugin, "settings.yml", readBackupCount());
         config = YamlConfiguration.loadConfiguration(file);
         YamlConfiguration defaults = ConfigUpdater.bundled(plugin, "settings.yml");
         if (defaults != null) {
@@ -93,7 +106,8 @@ public final class Settings {
                 config.getString("storage.mysql.table-prefix", "economy_"),
                 readSslMode(),
                 clamp(config.getInt("storage.mysql.connection-timeout-ms", 5000), 1000, 60000),
-                clamp(config.getInt("storage.mysql.socket-timeout-ms", 30000), 1000, 120000)
+                clamp(config.getInt("storage.mysql.socket-timeout-ms", 30000), 1000, 120000),
+                clamp(intValue("storage.mysql.retry-seconds", 5), 1, 300)
         );
 
         this.interest = readInterest();
@@ -105,6 +119,31 @@ public final class Settings {
         this.notifications = readNotifications();
         this.suggestions = readSuggestions();
         this.network = readNetwork();
+        this.zoneId = readZone();
+        this.placeholders = readPlaceholders();
+        this.vault = readVault();
+        this.audit = new Audit(booleanValue("audit.enabled", true),
+                clamp(intValue("audit.retention-days", 0), 0, 3650));
+        this.shutdownTimeoutSeconds = clamp(
+                intValue("storage.shutdown-timeout-seconds", 60), 5, 600);
+        this.backupCount = clamp(intValue("config.backup-count", 1), 1, 20);
+        this.reasonMaxLength = clamp(intValue("commands.reason-max-length", 160), 1, 160);
+        this.testMaxCycles = clamp(intValue("tests.max-cycles", 1000), 1, 10_000);
+    }
+
+    /**
+     * Liest {@code config.backup-count} vor dem Abgleich. Die Einstellung steht
+     * in derselben Datei, die dabei gesichert wird; deshalb wird sie roh aus
+     * dem vorhandenen Stand gelesen.
+     */
+    private int readBackupCount() {
+        File existing = ConfigUpdater.file(plugin, "settings.yml");
+        if (!existing.exists()) {
+            return 1;
+        }
+        int configured = YamlConfiguration.loadConfiguration(existing)
+                .getInt("config.backup-count", 1);
+        return clamp(configured, 1, 20);
     }
 
     /**
@@ -119,27 +158,61 @@ public final class Settings {
         ServerMode mode = parseEnum(ServerMode.class, "network.mode", "FULL");
         Invalidation invalidation = parseEnum(Invalidation.class, "network.invalidation", "TTL");
         int cacheTtl = clamp(intValue("network.cache-ttl-seconds", 60), 0, 86_400);
+        int leaseTtl = clamp(intValue("network.lease-ttl-seconds", 300), 60, 3600);
         TransferMode transferMode = parseEnum(TransferMode.class, "network.transfer.mode", "LOCAL");
         int timeout = clamp(intValue("network.transfer.timeout-seconds", 30), 1, 600);
 
         Limits limits = new Limits(
-                readLimit("network.limits.pay", 10, 60, 3),
-                readLimit("network.limits.credit.take", 3, 300, 10),
-                readLimit("network.limits.admin.balance", 60, 60, 0));
+                readLimit("pay", 10, 60, 3),
+                readLimit("credit.take", 3, 300, 10),
+                readLimit("admin.balance", 60, 60, 0),
+                readLimit("gui", 0, 60, 2),
+                readLimit("balance.top", 0, 60, 2));
 
         if (id.isBlank()) {
             plugin.getLogger().warning("network.id ist leer - verwende 'default'.");
             id = "default";
         }
-        return new Network(id, group, scope, mode, invalidation, cacheTtl,
+        return new Network(id, group, scope, mode, invalidation, cacheTtl, leaseTtl,
                 new Transfer(transferMode, timeout), limits);
     }
 
-    private RateLimit readLimit(String path, int count, int seconds, int cooldown) {
+    /**
+     * Liest eine Limit-Gruppe. Gruppen wie {@code credit.take} liegen
+     * verschachtelt in der YAML-Datei ({@code credit: take:}); Bukkit löst
+     * den Punkt im Pfad deshalb korrekt auf.
+     */
+    private RateLimit readLimit(String group, int count, int seconds, int cooldown) {
+        return readLimit(config.getConfigurationSection("network.limits"),
+                group, count, seconds, cooldown);
+    }
+
+    static RateLimit readLimit(ConfigurationSection limits, String group,
+                               int count, int seconds, int cooldown) {
+        ConfigurationSection section = limits == null ? null
+                : limits.getConfigurationSection(group);
         return new RateLimit(
-                Math.max(0, intValue(path + ".count", count)),
-                Math.max(1, intValue(path + ".seconds", seconds)),
-                Math.max(0, intValue(path + ".cooldown-seconds", cooldown)));
+                Math.max(0, sectionInt(section, "count", count)),
+                Math.max(1, sectionInt(section, "seconds", seconds)),
+                Math.max(0, sectionInt(section, "cooldown-seconds", cooldown)));
+    }
+
+    private static int sectionInt(ConfigurationSection section, String key, int fallback) {
+        if (section == null) {
+            return fallback;
+        }
+        Object raw = section.get(key);
+        if (raw instanceof Number number) {
+            return number.intValue();
+        }
+        if (raw instanceof String text) {
+            try {
+                return Integer.parseInt(text.trim());
+            } catch (NumberFormatException ignored) {
+                // Fällt unten auf den Standardwert zurück.
+            }
+        }
+        return fallback;
     }
 
     /**
@@ -224,13 +297,53 @@ public final class Settings {
     private Leaderboard readLeaderboard() {
         int pageSize = clamp(intValue("leaderboard.page-size", 10), 1, 50);
         int maxEntries = clamp(intValue("leaderboard.max-entries", 100), pageSize, 1000);
-        return new Leaderboard(pageSize, maxEntries);
+        boolean includeZero = booleanValue("leaderboard.include-zero-balances", false);
+        return new Leaderboard(pageSize, maxEntries, includeZero);
     }
 
     private Notifications readNotifications() {
         boolean balanceOnJoin = booleanValue("notifications.balance-on-join", true);
         int delay = clamp(intValue("notifications.balance-on-join-delay-ticks", 20), 0, 200);
         return new Notifications(balanceOnJoin, delay);
+    }
+
+    /**
+     * Liest {@code time-zone}. Ein leerer Wert verwendet die Zeitzone des
+     * Servers; ein ungültiger Wert wird gemeldet und ebenfalls ersetzt.
+     */
+    private ZoneId readZone() {
+        String raw = config.getString("time-zone", "");
+        if (raw == null || raw.isBlank()) {
+            return ZoneId.systemDefault();
+        }
+        try {
+            return ZoneId.of(raw.trim());
+        } catch (DateTimeException exception) {
+            plugin.getLogger().warning("Unbekannte time-zone '" + raw
+                    + "' - verwende die Zeitzone des Servers.");
+            return ZoneId.systemDefault();
+        }
+    }
+
+    private Placeholders readPlaceholders() {
+        int ttl = clamp(intValue("placeholder.cache-ttl-seconds", 30), 1, 3600);
+        int negativeTtl = clamp(intValue("placeholder.negative-cache-ttl-seconds", 10), 1, 3600);
+        int retention = clamp(intValue("placeholder.cache-retention-seconds", 300), ttl, 86_400);
+        int topSize = clamp(intValue("placeholder.top-size", 50), 1, 1000);
+        int refresh = clamp(intValue("placeholder.top-refresh-seconds", 60), 5, 3600);
+        return new Placeholders(ttl, negativeTtl, retention, topSize, refresh);
+    }
+
+    /**
+     * Liest {@code vault}. Die Anbindung ist optional; ohne installiertes
+     * Vault bleibt der Block wirkungslos.
+     */
+    private Vault readVault() {
+        boolean enabled = booleanValue("vault.enabled", true);
+        VaultPriority priority = parseEnum(VaultPriority.class, "vault.priority", "HIGH");
+        int timeout = clamp(intValue("vault.timeout-ms", 3000), 500, 30_000);
+        String singular = text("vault.currency-name-singular", "");
+        return new Vault(enabled, priority, timeout, singular);
     }
 
     private Suggestions readSuggestions() {
@@ -316,7 +429,7 @@ public final class Settings {
 
         try {
             ConfigFileWriter.writeIfChanged(file.toPath(), before, after,
-                    ConfigUpdater.backupFolder(plugin).toPath(), plugin.getLogger());
+                    ConfigUpdater.backupFolder(plugin).toPath(), backupCount, plugin.getLogger());
         } catch (IOException exception) {
             throw new IllegalStateException("settings.yml konnte nicht gespeichert werden: "
                     + exception.getMessage(), exception);
@@ -505,6 +618,50 @@ public final class Settings {
     }
 
     /**
+     * Zeitzone für Zinsplan und Datumsanzeigen ({@code time-zone}).
+     */
+    public ZoneId zoneId() {
+        return zoneId;
+    }
+
+    /**
+     * Einstellungen der PlaceholderAPI-Erweiterung ({@code placeholder}).
+     */
+    public Placeholders placeholders() {
+        return placeholders;
+    }
+
+    /**
+     * Einstellungen der Vault-Anbindung ({@code vault}).
+     */
+    public Vault vault() {
+        return vault;
+    }
+
+    /**
+     * Audit-Einstellungen ({@code audit}).
+     */
+    public Audit audit() {
+        return audit;
+    }
+
+    public int shutdownTimeoutSeconds() {
+        return shutdownTimeoutSeconds;
+    }
+
+    public int backupCount() {
+        return backupCount;
+    }
+
+    public int reasonMaxLength() {
+        return reasonMaxLength;
+    }
+
+    public int testMaxCycles() {
+        return testMaxCycles;
+    }
+
+    /**
      * Wer teilt sich Guthaben? (Abschnitt 11.1)
      */
     public enum EconomyScope {
@@ -547,6 +704,7 @@ public final class Settings {
      * @param mode         {@code FULL} oder {@code READ_ONLY}
      * @param invalidation Verbreitungsweg für Cache-Invalidierung
      * @param cacheTtlSeconds Lebensdauer zwischengespeicherter Kontostände
+     * @param leaseTtlSeconds Laufzeit der Zins-Lease
      * @param transfer     Zustellung von {@code /eco pay}
      * @param limits       Rate-Limits je Spieler und Pfad
      */
@@ -556,6 +714,7 @@ public final class Settings {
                           ServerMode mode,
                           Invalidation invalidation,
                           int cacheTtlSeconds,
+                          int leaseTtlSeconds,
                           Transfer transfer,
                           Limits limits) {
 
@@ -588,7 +747,8 @@ public final class Settings {
     public record RateLimit(int count, int seconds, int cooldownSeconds) {
     }
 
-    public record Limits(RateLimit pay, RateLimit creditTake, RateLimit adminBalance) {
+    public record Limits(RateLimit pay, RateLimit creditTake, RateLimit adminBalance,
+                         RateLimit gui, RateLimit balanceTop) {
     }
 
     /**
@@ -633,14 +793,15 @@ public final class Settings {
                         String tablePrefix,
                         String sslMode,
                         int connectionTimeoutMs,
-                        int socketTimeoutMs) {
+                        int socketTimeoutMs,
+                        int retrySeconds) {
     }
 
     /**
      * Einstellungen des Zinszyklus.
      *
      * @param enabled         ob der Zyklus automatisch läuft
-     * @param startTime       Uhrzeit des ersten Laufs (Serverzeit)
+     * @param startTime       Uhrzeit des ersten Laufs (Zeit in {@code time-zone})
      * @param intervalMinutes Abstand zwischen zwei Läufen in Minuten
      * @param savingsFactor   a im Sparzins (y = a * sqrt(x))
      * @param creditFactor    a im Kreditzins für neue Kredite
@@ -680,10 +841,11 @@ public final class Settings {
     /**
      * Einstellungen für /money top.
      *
-     * @param pageSize   Einträge pro Seite
-     * @param maxEntries maximale Anzahl geladener Einträge
+     * @param pageSize            Einträge pro Seite
+     * @param maxEntries          maximale Anzahl geladener Einträge
+     * @param includeZeroBalances auch Konten mit Guthaben 0 aufnehmen
      */
-    public record Leaderboard(int pageSize, int maxEntries) {
+    public record Leaderboard(int pageSize, int maxEntries, boolean includeZeroBalances) {
     }
 
     /**
@@ -693,6 +855,57 @@ public final class Settings {
      * @param balanceOnJoinDelayTicks  Verzögerung in Ticks (20 = 1 Sekunde)
      */
     public record Notifications(boolean balanceOnJoin, int balanceOnJoinDelayTicks) {
+    }
+
+    /**
+     * Einstellungen der PlaceholderAPI-Erweiterung.
+     *
+     * @param cacheTtlSeconds         Lebensdauer zwischengespeicherter Offline-Guthaben
+     * @param negativeCacheTtlSeconds Lebensdauer für "kein Konto vorhanden"
+     * @param cacheRetentionSeconds   Aufräumalter des Caches
+     * @param topSize                 Plätze der Platzhalter-Top-Liste
+     * @param topRefreshSeconds       Aktualisierungsintervall der Top-Liste
+     */
+    public record Placeholders(int cacheTtlSeconds,
+                               int negativeCacheTtlSeconds,
+                               int cacheRetentionSeconds,
+                               int topSize,
+                               int topRefreshSeconds) {
+    }
+
+    /**
+     * Einstellungen der Vault-Anbindung.
+     *
+     * @param enabled               Provider registrieren
+     * @param priority              Priorität bei mehreren Vault-Anbietern
+     * @param timeoutMillis         Frist für Lade- und Buchungsaufrufe
+     * @param currencyNameSingular  Einzahlungsname; leer = {@code currency.name}
+     */
+    public record Vault(boolean enabled,
+                        VaultPriority priority,
+                        int timeoutMillis,
+                        String currencyNameSingular) {
+    }
+
+    /**
+     * Priorität der Vault-Registrierung (entspricht den Bukkit-Service-
+     * Prioritäten).
+     */
+    public enum VaultPriority {
+        LOWEST,
+        LOW,
+        NORMAL,
+        HIGH,
+        HIGHEST
+    }
+
+    /**
+     * Audit-Einstellungen.
+     *
+     * @param enabled       Audit-Einträge für Fernbuchungen schreiben
+     * @param retentionDays Aufbewahrung in Tagen; 0 = unbegrenzt
+     */
+    public record Audit(boolean enabled, int retentionDays) {
     }
 
     /**

@@ -45,9 +45,20 @@ public interface EconomyStorage {
      * @param limit maximale Anzahl der Einträge, mindestens 1
      */
     default List<AccountData> loadTop(int limit) {
+        return loadTop(limit, false);
+    }
+
+    /**
+     * Wie {@link #loadTop(int)}; mit {@code includeZeroBalances} werden auch
+     * Konten mit Guthaben 0 aufgenommen. Negative Guthaben bleiben in beiden
+     * Fällen außen vor.
+     */
+    default List<AccountData> loadTop(int limit, boolean includeZeroBalances) {
         int maximum = Math.max(1, limit);
         return loadAll().stream()
-                .filter(data -> data.balance().signum() > 0)
+                .filter(data -> includeZeroBalances
+                        ? data.balance().signum() >= 0
+                        : data.balance().signum() > 0)
                 .sorted(Comparator.comparing(AccountData::balance, Comparator.reverseOrder())
                         .thenComparing(AccountData::name, String.CASE_INSENSITIVE_ORDER))
                 .limit(maximum)
@@ -125,6 +136,17 @@ public interface EconomyStorage {
      */
     default List<AuditEntry> audit(String scope, int limit) {
         return List.of();
+    }
+
+    /**
+     * Entfernt Audit-Einträge eines Scopes, die älter als {@code cutoffMillis}
+     * sind. Die Standardimplementierung tut nichts.
+     *
+     * @param batchSize maximale Anzahl je Löschvorgang
+     * @return Anzahl der gelöschten Einträge
+     */
+    default int pruneAudit(String scope, long cutoffMillis, int batchSize) {
+        return 0;
     }
 
     /**

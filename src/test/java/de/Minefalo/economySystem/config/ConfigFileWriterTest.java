@@ -44,6 +44,41 @@ class ConfigFileWriterTest {
     }
 
     @Test
+    void rotiertSicherungen() throws IOException {
+        Path config = Files.createDirectories(temp.resolve("config"));
+        Path target = config.resolve("settings.yml");
+        Path backupDir = config.resolve("backup");
+
+        Files.writeString(target, "eins\n", StandardCharsets.UTF_8);
+        assertTrue(ConfigFileWriter.writeIfChanged(target, "eins\n", "zwei\n",
+                backupDir, 3, LOG));
+        assertTrue(ConfigFileWriter.writeIfChanged(target, "zwei\n", "drei\n",
+                backupDir, 3, LOG));
+        assertTrue(ConfigFileWriter.writeIfChanged(target, "drei\n", "vier\n",
+                backupDir, 3, LOG));
+
+        Path newest = backupDir.resolve("settings.yml" + ConfigFileWriter.BACKUP_SUFFIX);
+        assertEquals("drei\n", Files.readString(newest, StandardCharsets.UTF_8));
+        assertEquals("zwei\n", Files.readString(
+                backupDir.resolve("settings.yml.vor-config-update.1.bak"),
+                StandardCharsets.UTF_8));
+        assertEquals("eins\n", Files.readString(
+                backupDir.resolve("settings.yml.vor-config-update.2.bak"),
+                StandardCharsets.UTF_8));
+        assertFalse(Files.exists(
+                backupDir.resolve("settings.yml.vor-config-update.3.bak")));
+
+        // Eine kleinere Einstellung entfernt die überzähligen Generationen.
+        assertTrue(ConfigFileWriter.writeIfChanged(target, "vier\n", "fünf\n",
+                backupDir, 1, LOG));
+        assertEquals("vier\n", Files.readString(newest, StandardCharsets.UTF_8));
+        assertFalse(Files.exists(
+                backupDir.resolve("settings.yml.vor-config-update.1.bak")));
+        assertFalse(Files.exists(
+                backupDir.resolve("settings.yml.vor-config-update.2.bak")));
+    }
+
+    @Test
     void legtBackupOrdnerAn() throws IOException {
         Path config = Files.createDirectories(temp.resolve("config"));
         Path target = config.resolve("gui.yml");

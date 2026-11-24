@@ -7,7 +7,9 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.math.BigDecimal;
 import java.time.Duration;
-import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -38,7 +40,7 @@ public final class InterestScheduler {
         }
 
         long intervalTicks = interest.intervalMinutes() * 60L * 20L;
-        long initialTicks = initialDelayTicks(interest.startTime());
+        long initialTicks = initialDelayTicks(interest.startTime(), plugin.settings().zoneId());
         task = plugin.getServer().getScheduler()
                 .runTaskTimer(plugin, this::runCycle, initialTicks, intervalTicks);
 
@@ -125,9 +127,9 @@ public final class InterestScheduler {
         });
     }
 
-    private static long initialDelayTicks(java.time.LocalTime startTime) {
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime next = now.toLocalDate().atTime(startTime);
+    private static long initialDelayTicks(LocalTime startTime, ZoneId zone) {
+        ZonedDateTime now = ZonedDateTime.now(zone);
+        ZonedDateTime next = now.toLocalDate().atTime(startTime).atZone(zone);
         if (!next.isAfter(now)) {
             next = next.plusDays(1);
         }

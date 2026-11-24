@@ -437,7 +437,8 @@ public final class CreditService {
      * Formatiert ein Fälligkeitsdatum mit dem konfigurierten Format.
      */
     public String formatDue(Loan loan) {
-        return loan.dueDate().format(DateTimeFormatter.ofPattern(
-                plugin.settings().credits().dateFormat()));
+        return DateTimeFormatter.ofPattern(plugin.settings().credits().dateFormat())
+                .withZone(plugin.settings().zoneId())
+                .format(Instant.ofEpochMilli(loan.dueAt()));
     }
 }

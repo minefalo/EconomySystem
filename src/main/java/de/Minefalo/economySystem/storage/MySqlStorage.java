@@ -39,7 +39,7 @@ public final class MySqlStorage implements EconomyStorage {
 
     private Connection connection;
     private long retryAfterNanos;
-    private static final long RETRY_DELAY_NANOS = java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+    private final long retryDelayNanos;
 
     public MySqlStorage(JavaPlugin plugin, Settings settings) {
         this.plugin = plugin;
@@ -71,6 +71,9 @@ public final class MySqlStorage implements EconomyStorage {
                 + "ON DUPLICATE KEY UPDATE `owner_name` = ?, `principal` = ?, `interest` = ?, "
                 + "`principal_remaining` = ?, `interest_remaining` = ?, `days` = ?, `due_at` = ?, "
                 + "`auto_collect` = ?";
+
+        this.retryDelayNanos = java.util.concurrent.TimeUnit.SECONDS.toNanos(
+                Math.max(1, config.retrySeconds()));
     }
 
     @Override
@@ -266,7 +269,7 @@ public final class MySqlStorage implements EconomyStorage {
                 connection = openConnection();
                 retryAfterNanos = 0;
             } catch (SQLException exception) {
-                retryAfterNanos = System.nanoTime() + RETRY_DELAY_NANOS;
+                retryAfterNanos = System.nanoTime() + retryDelayNanos;
                 throw exception;
             }
         }
@@ -335,9 +338,11 @@ public final class MySqlStorage implements EconomyStorage {
      * sortiert werden (SICHERHEITSAUDIT, ROT-2).
      */
     @Override
-    public List<AccountData> loadTop(int limit) {
+    public List<AccountData> loadTop(int limit, boolean includeZeroBalances) {
+        String comparison = includeZeroBalances ? ">=" : ">";
         String sql = "SELECT `uuid`, `name`, `balance` FROM `" + table + "` "
-                + "WHERE `balance` > 0 ORDER BY `balance` DESC, `name` ASC LIMIT ?";
+                + "WHERE `balance` " + comparison + " 0 "
+                + "ORDER BY `balance` DESC, `name` ASC LIMIT ?";
         List<AccountData> accounts = new ArrayList<>();
         synchronized (lock) {
             try (PreparedStatement statement = connection().prepareStatement(sql)) {
@@ -719,6 +724,36 @@ public final class MySqlStorage implements EconomyStorage {
         return entries;
     }
 
+    /**
+     * Entfernt alte Audit-Einträge in begrenzten Löschvorgängen, damit eine
+     * große Tabelle nicht in einer einzigen Transaktion gesperrt wird.
+     */
+    @Override
+    public int pruneAudit(String scope, long cutoffMillis, int batchSize) {
+        int limit = Math.max(1, Math.min(batchSize, 1000));
+        String sql = "DELETE FROM `" + auditTable + "` WHERE `scope` = ?"
+                + " AND `occurred_at` < ? ORDER BY `occurred_at` LIMIT ?";
+        int deleted = 0;
+        synchronized (lock) {
+            // Höchstens 20 Batches je Lauf; der Rest folgt beim nächsten Tag.
+            for (int batch = 0; batch < 20; batch++) {
+                try (PreparedStatement statement = connection().prepareStatement(sql)) {
+                    statement.setString(1, scope);
+                    statement.setLong(2, cutoffMillis);
+                    statement.setInt(3, limit);
+                    int count = statement.executeUpdate();
+                    deleted += count;
+                    if (count < limit) {
+                        break;
+                    }
+                } catch (SQLException exception) {
+                    throw failAudit(exception);
+                }
+            }
+        }
+        return deleted;
+    }
+
     private static UUID uuidOrNull(String value) {
         return value == null ? null : UUID.fromString(value);
     }
@@ -810,13 +845,25 @@ public final class MySqlStorage implements EconomyStorage {
     }
 
     private StorageException fail(String action, SQLException exception) {
-        // Bei Fehlern nicht für jeden Aufruf erneut eine Verbindung aufbauen.
-        closeConnection();
-        if (retryAfterNanos == 0 || System.nanoTime() - retryAfterNanos >= 0) {
-            retryAfterNanos = System.nanoTime() + RETRY_DELAY_NANOS;
-        }
+        markFailure();
         return new StorageException("MySQL: Konto konnte nicht " + action
                 + " werden: " + exception.getMessage(), exception);
+    }
+
+    private StorageException failAudit(SQLException exception) {
+        markFailure();
+        return new StorageException("MySQL: Audit-Einträge konnten nicht aufgeräumt werden: "
+                + exception.getMessage(), exception);
+    }
+
+    /**
+     * Bei Fehlern nicht für jeden Aufruf erneut eine Verbindung aufbauen.
+     */
+    private void markFailure() {
+        closeConnection();
+        if (retryAfterNanos == 0 || System.nanoTime() - retryAfterNanos >= 0) {
+            retryAfterNanos = System.nanoTime() + retryDelayNanos;
+        }
     }
 
     private void closeConnection() {

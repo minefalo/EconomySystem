@@ -17,8 +17,8 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.math.BigDecimal;
 import java.time.Duration;
-import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -43,9 +43,6 @@ public final class EconomyService {
     private final JavaPlugin plugin;
     private final Settings settings;
     private final EconomyStorage storage;
-    /** TTL der Zins-Lease; nach einem Absturz übernimmt der nächste Server. */
-    private static final long LEASE_TTL_MILLIS = TimeUnit.MINUTES.toMillis(5);
-
     private static final DateTimeFormatter CYCLE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm");
 
     private final Map<UUID, Account> accounts = new ConcurrentHashMap<>();
@@ -53,6 +50,7 @@ public final class EconomyService {
     private IncomeHandler incomeHandler;
 
     private BukkitTask autoSaveTask;
+    private BukkitTask auditTask;
 
     public EconomyService(JavaPlugin plugin, Settings settings, EconomyStorage storage) {
         this.plugin = plugin;
@@ -68,6 +66,7 @@ public final class EconomyService {
     public void init() {
         storage.init();
         scheduleAutoSave();
+        scheduleAuditCleanup();
     }
 
     public Currency currency() {
@@ -129,6 +128,53 @@ public final class EconomyService {
         }
         try {
             return CompletableFuture.supplyAsync(() -> account(uniqueId, name), executor);
+        } catch (RuntimeException exception) {
+            return CompletableFuture.failedFuture(exception);
+        }
+    }
+
+    /**
+     * Liefert ein vorhandenes Konto, ohne eines anzulegen. Wird für
+     * seiteneffektfreie Fremdzugriffe (z. B. Vault) verwendet; unbekannte
+     * Konten liefern ein leeres Optional.
+     */
+    public CompletableFuture<Optional<Account>> existingAccountAsync(UUID uniqueId, String name) {
+        Account cached = accounts.get(uniqueId);
+        if (cached != null) {
+            updateName(cached, name);
+            return CompletableFuture.completedFuture(Optional.of(cached));
+        }
+        if (executor.isShutdown()) {
+            return CompletableFuture.completedFuture(Optional.empty());
+        }
+        try {
+            return CompletableFuture.supplyAsync(() -> storage.load(uniqueId)
+                    .map(data -> accounts.computeIfAbsent(data.uniqueId(),
+                            id -> new Account(id, data.name(), currency().normalize(data.balance())))),
+                    executor);
+        } catch (RuntimeException exception) {
+            return CompletableFuture.failedFuture(exception);
+        }
+    }
+
+    /**
+     * Löst einen Namen über Cache und Speicher auf ein bekanntes Konto auf,
+     * ohne eines anzulegen. Läuft vollständig auf dem Storage-Executor und
+     * ruft deshalb keine Bukkit-API aus fremden Threads auf.
+     */
+    public CompletableFuture<Optional<Account>> existingAccountByNameAsync(String name) {
+        if (name == null || name.isBlank() || executor.isShutdown()) {
+            return CompletableFuture.completedFuture(Optional.empty());
+        }
+        try {
+            return CompletableFuture.supplyAsync(() -> {
+                Optional<Account> cached = accountByName(name);
+                if (cached.isPresent()) {
+                    return cached;
+                }
+                return storage.loadByName(name).map(data -> accounts.computeIfAbsent(data.uniqueId(),
+                        id -> new Account(id, data.name(), currency().normalize(data.balance()))));
+            }, executor);
         } catch (RuntimeException exception) {
             return CompletableFuture.failedFuture(exception);
         }
@@ -203,6 +249,14 @@ public final class EconomyService {
      * @param limit maximale Anzahl der Einträge
      */
     public CompletableFuture<List<AccountData>> topAsync(int limit) {
+        return topAsync(limit, false);
+    }
+
+    /**
+     * Wie {@link #topAsync(int)}; mit {@code includeZeroBalances} werden auch
+     * Konten mit Guthaben 0 aufgenommen. Negative Guthaben bleiben außen vor.
+     */
+    public CompletableFuture<List<AccountData>> topAsync(int limit, boolean includeZeroBalances) {
         CompletableFuture<List<AccountData>> future = new CompletableFuture<>();
         int maximum = Math.max(1, limit);
         if (executor.isShutdown()) {
@@ -216,7 +270,7 @@ public final class EconomyService {
                     Map<UUID, AccountData> balances = new LinkedHashMap<>();
                     // Der Speicher liefert nur die besten Einträge; loadAll()
                     // bleibt dem Zinszyklus vorbehalten (SICHERHEITSAUDIT, ROT-2).
-                    for (AccountData data : storage.loadTop(maximum)) {
+                    for (AccountData data : storage.loadTop(maximum, includeZeroBalances)) {
                         balances.put(data.uniqueId(), data);
                     }
                     for (Account account : accounts.values()) {
@@ -224,7 +278,9 @@ public final class EconomyService {
                     }
 
                     List<AccountData> top = balances.values().stream()
-                            .filter(data -> data.balance().signum() > 0)
+                            .filter(data -> includeZeroBalances
+                                    ? data.balance().signum() >= 0
+                                    : data.balance().signum() > 0)
                             .sorted(Comparator.comparing(AccountData::balance,
                                             Comparator.reverseOrder())
                                     .thenComparing(AccountData::name, String.CASE_INSENSITIVE_ORDER))
@@ -515,8 +571,8 @@ public final class EconomyService {
         Settings.Interest interest = settings.interest();
         LocalTime start = interest.startTime();
         int interval = Math.max(1, interest.intervalMinutes());
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime anchor = now.toLocalDate().atTime(start);
+        ZonedDateTime now = ZonedDateTime.now(settings.zoneId());
+        ZonedDateTime anchor = now.toLocalDate().atTime(start).atZone(settings.zoneId());
         long minutes = Duration.between(anchor, now).toMinutes();
         long slot = minutes <= 0 ? 0 : minutes / interval;
         return anchor.plusMinutes(slot * interval).format(CYCLE_FORMAT);
@@ -572,6 +628,9 @@ public final class EconomyService {
      * Buchung nicht kippen: die Buchung ist die Wahrheit, das Audit die Spur.
      */
     private void recordTransferAudit(TransferData data, TransferResult result) {
+        if (!settings.audit().enabled()) {
+            return;
+        }
         try {
             storage.recordAudit(new AuditEntry(data.id(), System.currentTimeMillis(),
                     settings.network().id(), data.scope(),
@@ -625,7 +684,8 @@ public final class EconomyService {
                     + settings.interest().executor() + "'.");
             return emptyCycle();
         }
-        if (!storage.acquireLease(scope, network.id(), LEASE_TTL_MILLIS)) {
+        if (!storage.acquireLease(scope, network.id(),
+                TimeUnit.SECONDS.toMillis(settings.network().leaseTtlSeconds()))) {
             String holder = storage.lease(scope).map(LeaseInfo::holder).orElse("?");
             plugin.getLogger().warning("Zinszyklus übersprungen: die Lease für '" + scope
                     + "' hält '" + holder + "'.");
@@ -820,6 +880,52 @@ public final class EconomyService {
         void onIncome(Account account, BigDecimal amount);
     }
 
+    /**
+     * Plant die tägliche Audit-Bereinigung. Der eigentliche Löschvorgang läuft
+     * auf dem Storage-Executor, damit der Server-Thread frei bleibt.
+     */
+    private void scheduleAuditCleanup() {
+        if (auditTask != null) {
+            auditTask.cancel();
+            auditTask = null;
+        }
+        Settings.Audit audit = settings.audit();
+        if (audit.retentionDays() <= 0) {
+            return;
+        }
+        auditTask = plugin.getServer().getScheduler().runTaskTimer(plugin,
+                this::pruneAudit, 20L * 60L * 5L, 20L * 60L * 60L * 24L);
+    }
+
+    private void pruneAudit() {
+        if (executor.isShutdown()) {
+            return;
+        }
+        long retention = settings.audit().retentionDays();
+        if (retention <= 0) {
+            return;
+        }
+        long cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(retention);
+        String scope = settings.network().scopeKey();
+        try {
+            executor.execute(() -> {
+                try {
+                    int deleted = storage.pruneAudit(scope, cutoff, 1000);
+                    if (deleted > 0) {
+                        plugin.getLogger().info(deleted + " alte Audit-Einträge im Scope '"
+                                + scope + "' entfernt.");
+                    }
+                } catch (RuntimeException exception) {
+                    plugin.getLogger().warning("Audit-Einträge konnten nicht aufgeräumt werden: "
+                            + exception.getMessage());
+                }
+            });
+        } catch (RuntimeException exception) {
+            plugin.getLogger().warning("Audit-Aufräumung konnte nicht eingeplant werden: "
+                    + exception.getMessage());
+        }
+    }
+
     private void scheduleAutoSave() {
         int seconds = settings.saveIntervalSeconds();
         if (seconds <= 0) {
@@ -838,7 +944,12 @@ public final class EconomyService {
             autoSaveTask.cancel();
             autoSaveTask = null;
         }
+        if (auditTask != null) {
+            auditTask.cancel();
+            auditTask = null;
+        }
         scheduleAutoSave();
+        scheduleAuditCleanup();
     }
 
     /**
@@ -849,6 +960,10 @@ public final class EconomyService {
         if (autoSaveTask != null) {
             autoSaveTask.cancel();
             autoSaveTask = null;
+        }
+        if (auditTask != null) {
+            auditTask.cancel();
+            auditTask = null;
         }
 
         if (executor.isShutdown()) {
@@ -870,13 +985,15 @@ public final class EconomyService {
         });
         executor.shutdown();
 
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+        int timeoutSeconds = settings.shutdownTimeoutSeconds();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
         try {
             while (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
                 if (System.nanoTime() - deadline >= 0) {
                     List<Runnable> dropped = executor.shutdownNow();
-                    plugin.getLogger().severe("Speicherung beim Stoppen nach 60 Sekunden abgebrochen; "
-                            + dropped.size() + " Vorgänge wurden verworfen. Offene Änderungen können verloren gehen.");
+                    plugin.getLogger().severe("Speicherung beim Stoppen nach " + timeoutSeconds
+                            + " Sekunden abgebrochen; " + dropped.size()
+                            + " Vorgänge wurden verworfen. Offene Änderungen können verloren gehen.");
                     break;
                 }
                 plugin.getLogger().warning("Speichervorgänge laufen noch; der Server wartet auf ihren Abschluss.");

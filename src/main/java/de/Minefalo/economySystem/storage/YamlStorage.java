@@ -190,10 +190,12 @@ public final class YamlStorage implements EconomyStorage {
      * Konto-Dateien zu parsen (SICHERHEITSAUDIT, ROT-2).
      */
     @Override
-    public List<AccountData> loadTop(int limit) {
+    public List<AccountData> loadTop(int limit, boolean includeZeroBalances) {
         int maximum = Math.max(1, limit);
         return accountIndex.values().stream()
-                .filter(data -> data.balance().signum() > 0)
+                .filter(data -> includeZeroBalances
+                        ? data.balance().signum() >= 0
+                        : data.balance().signum() > 0)
                 .sorted(Comparator.comparing(AccountData::balance, Comparator.reverseOrder())
                         .thenComparing(AccountData::name, String.CASE_INSENSITIVE_ORDER))
                 .limit(maximum)

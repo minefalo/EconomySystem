@@ -24,14 +24,13 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class PlaceholderData {
 
-    private static final long CACHE_TTL_MILLIS = 30_000L;
-    private static final long NEGATIVE_TTL_MILLIS = 10_000L;
-    private static final long CACHE_RETENTION_MILLIS = 5L * 60_000L;
-    private static final int TOP_SIZE = 50;
-    private static final long TOP_REFRESH_TICKS = 60L * 20L;
-
     private final EconomySystem plugin;
     private final EconomyService economy;
+    private long cacheTtlMillis;
+    private long negativeTtlMillis;
+    private long cacheRetentionMillis;
+    private int topSize;
+    private long topRefreshTicks;
     private final Map<String, CachedBalance> balances = new ConcurrentHashMap<>();
     private final Set<String> pending = ConcurrentHashMap.newKeySet();
 
@@ -41,6 +40,20 @@ public final class PlaceholderData {
     public PlaceholderData(EconomySystem plugin) {
         this.plugin = plugin;
         this.economy = plugin.economy();
+        configure();
+    }
+
+    /**
+     * Übernimmt die aktuellen Werte aus {@code settings.placeholder}. Wird im
+     * Konstruktor und bei jedem Reload aufgerufen.
+     */
+    private void configure() {
+        Settings.Placeholders config = plugin.settings().placeholders();
+        this.cacheTtlMillis = config.cacheTtlSeconds() * 1000L;
+        this.negativeTtlMillis = config.negativeCacheTtlSeconds() * 1000L;
+        this.cacheRetentionMillis = config.cacheRetentionSeconds() * 1000L;
+        this.topSize = config.topSize();
+        this.topRefreshTicks = config.topRefreshSeconds() * 20L;
     }
 
     /**
@@ -50,7 +63,7 @@ public final class PlaceholderData {
         stop();
         refreshTop();
         topTask = plugin.getServer().getScheduler()
-                .runTaskTimer(plugin, this::refreshTop, TOP_REFRESH_TICKS, TOP_REFRESH_TICKS);
+                .runTaskTimer(plugin, this::refreshTop, topRefreshTicks, topRefreshTicks);
     }
 
     public void stop() {
@@ -61,11 +74,13 @@ public final class PlaceholderData {
     }
 
     /**
-     * Verwirft alle zwischengespeicherten Werte (z. B. nach einem Reload).
+     * Verwirft alle zwischengespeicherten Werte und startet die Top-Liste mit
+     * den aktuellen Einstellungen neu (z. B. nach einem Reload).
      */
-    public void clear() {
+    public void reload() {
+        configure();
         balances.clear();
-        refreshTop();
+        start();
     }
 
     /**
@@ -73,7 +88,7 @@ public final class PlaceholderData {
      */
     public void refreshTop() {
         pruneCache();
-        economy.topAsync(TOP_SIZE).thenAccept(result -> top = List.copyOf(result))
+        economy.topAsync(topSize).thenAccept(result -> top = List.copyOf(result))
                 .exceptionally(error -> {
                     plugin.getLogger().warning("Top-Guthaben konnte nicht berechnet werden: "
                             + messageOf(error));
@@ -85,7 +100,7 @@ public final class PlaceholderData {
      * Entfernt alte Offline-Werte, damit der Cache nicht unbegrenzt wächst.
      */
     private void pruneCache() {
-        long cutoff = System.currentTimeMillis() - CACHE_RETENTION_MILLIS;
+        long cutoff = System.currentTimeMillis() - cacheRetentionMillis;
         balances.entrySet().removeIf(entry -> entry.getValue().fetchedAt() < cutoff);
     }
 
@@ -110,7 +125,7 @@ public final class PlaceholderData {
         long now = System.currentTimeMillis();
         CachedBalance cached = balances.get(key);
         if (cached != null) {
-            long ttl = cached.balance() == null ? NEGATIVE_TTL_MILLIS : CACHE_TTL_MILLIS;
+            long ttl = cached.balance() == null ? negativeTtlMillis : cacheTtlMillis;
             if (now - cached.fetchedAt() > ttl) {
                 refreshAsync(name, key);
             }

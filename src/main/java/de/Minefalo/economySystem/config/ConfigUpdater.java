@@ -140,8 +140,31 @@ public final class ConfigUpdater {
      * @return {@code true}, wenn die Datei angelegt oder geändert wurde
      */
     public static boolean update(JavaPlugin plugin, String fileName) {
+        return update(plugin, fileName, backupCount(plugin));
+    }
+
+    /**
+     * Wie {@link #update(JavaPlugin, String)}, hält aber bis zu
+     * {@code backupCount} Sicherungen je Datei vor.
+     */
+    public static boolean update(JavaPlugin plugin, String fileName, int backupCount) {
         return update(file(plugin, fileName), readResource(plugin, fileName),
-                plugin.getLogger(), markupFor(fileName));
+                plugin.getLogger(), markupFor(fileName), backupCount);
+    }
+
+    /**
+     * Liest {@code config.backup-count} roh aus der vorhandenen
+     * {@code settings.yml}. Die Einstellung steht in der Datei, die beim
+     * Abgleich selbst gesichert wird, und muss deshalb vorher bekannt sein.
+     */
+    public static int backupCount(JavaPlugin plugin) {
+        File settings = file(plugin, "settings.yml");
+        if (!settings.exists()) {
+            return 1;
+        }
+        int configured = YamlConfiguration.loadConfiguration(settings)
+                .getInt("config.backup-count", 1);
+        return Math.max(1, Math.min(20, configured));
     }
 
     /**
@@ -171,6 +194,11 @@ public final class ConfigUpdater {
      * Kern des Abgleichs ohne laufendes Plugin (testbar).
      */
     static boolean update(File target, String template, Logger logger, Markup markup) {
+        return update(target, template, logger, markup, 1);
+    }
+
+    static boolean update(File target, String template, Logger logger, Markup markup,
+                          int backupCount) {
         if (template == null) {
             return false;
         }
@@ -195,7 +223,7 @@ public final class ConfigUpdater {
             String after = merge(template, before, markup, logger);
             File backup = new File(target.getParentFile(), BACKUP_FOLDER);
             boolean changed = ConfigFileWriter.writeIfChanged(target.toPath(), before, after,
-                    backup.toPath(), logger);
+                    backup.toPath(), backupCount, logger);
             if (changed) {
                 logger.info(display(target) + " um aktuelle Standards und Kommentare ergänzt.");
             }

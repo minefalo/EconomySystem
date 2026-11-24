@@ -24,7 +24,6 @@ import java.util.concurrent.CompletableFuture;
 public final class AdminTestInterestCycleModule extends AbstractModule {
 
     private static final String PERMISSION_TESTS = "economysystem.tests";
-    private static final int MAX_TEST_CYCLES = 1000;
 
     public AdminTestInterestCycleModule(EconomySystem plugin, EconomyService economy) {
         super(plugin, economy);
@@ -80,15 +79,16 @@ public final class AdminTestInterestCycleModule extends AbstractModule {
     }
 
     private int parseCycleCount(CommandSender sender, String input) {
+        int maximum = plugin.settings().testMaxCycles();
         try {
             int cycles = Integer.parseInt(input.trim());
-            if (cycles >= 1 && cycles <= MAX_TEST_CYCLES) {
+            if (cycles >= 1 && cycles <= maximum) {
                 return cycles;
             }
         } catch (NumberFormatException ignored) {
             // Fällt unten auf die Fehlermeldung zurück.
         }
-        messages().send(sender, "tests-cycles-invalid", "max", String.valueOf(MAX_TEST_CYCLES));
+        messages().send(sender, "tests-cycles-invalid", "max", String.valueOf(maximum));
         return 0;
     }
 

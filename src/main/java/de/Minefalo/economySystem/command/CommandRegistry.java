@@ -110,7 +110,8 @@ public final class CommandRegistry implements CommandExecutor, TabCompleter {
         }
         this.shortcutPaths = shortcuts;
         this.parser = new CommandParser(tree,
-                resolveSubcommandWords(commandsConfig.subcommandWords(), tree, warning));
+                resolveSubcommandWords(commandsConfig.subcommandWords(), tree, warning),
+                plugin.settings().reasonMaxLength());
     }
 
     /**
@@ -671,6 +672,12 @@ public final class CommandRegistry implements CommandExecutor, TabCompleter {
         }
         if ("admin.balance".equals(path) || path.startsWith("admin.balance.")) {
             return new Limit("admin.balance", limits.adminBalance());
+        }
+        if ("gui".equals(path)) {
+            return new Limit("gui", limits.gui());
+        }
+        if ("balance.top".equals(path)) {
+            return new Limit("balance.top", limits.balanceTop());
         }
         return null;
     }

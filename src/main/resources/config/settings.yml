@@ -2,7 +2,12 @@
 #  EconomySystem - Einstellungen
 # ==========================================================
 
-config-version: 4
+config-version: 6
+
+# Zeitzone für Zinsplan und Datumsanzeigen (z. B. "Europe/Berlin").
+# Leer = Zeitzone des Servers. Im Netzwerk müssen alle Server dieselbe
+# Zeitzone verwenden, damit sie denselben Zinszyklus-Schlüssel bilden.
+time-zone: ""
 
 # Test-Befehle (/economysystem-admin tests ...) freischalten.
 # ACHTUNG: Die Test-Befehle verändern echte Kontostände, indem sie
@@ -10,6 +15,10 @@ config-version: 4
 # aktivieren.
 tests:
   enabled: false
+
+  # Maximale Anzahl Zyklen für /economysystem-admin tests zins-zyklus add.
+  # Gilt zusätzlich zur Permission economysystem.tests (1 - 10000).
+  max-cycles: 1000
 
 currency:
   # Anzeigename der Währung (z. B. in Nachrichten über %currency%)
@@ -49,7 +58,7 @@ interest:
   # Zinszyklus automatisch ausführen
   enabled: true
 
-  # Uhrzeit des ersten Laufs (Serverzeit, Format HH:mm)
+  # Uhrzeit des ersten Laufs (Zeit in time-zone, Format HH:mm)
   start-time: "00:01"
 
   # Abstand zwischen zwei Zinszyklen in Minuten
@@ -108,6 +117,43 @@ leaderboard:
 
   # Maximale Anzahl Einträge, die für die Bestenliste geladen werden
   max-entries: 100
+
+  # Auch Konten mit Guthaben 0 in /money top aufnehmen.
+  # Negative Guthaben werden nie angezeigt; Platzhalter bleiben positiv.
+  include-zero-balances: false
+
+placeholder:
+  # Lebensdauer zwischengespeicherter Offline-Guthaben in Sekunden.
+  cache-ttl-seconds: 30
+
+  # Lebensdauer für "kein Konto vorhanden" in Sekunden.
+  negative-cache-ttl-seconds: 10
+
+  # Nach dieser Zeit werden alte Cache-Einträge entfernt (>= cache-ttl).
+  cache-retention-seconds: 300
+
+  # Anzahl der Plätze in der Platzhalter-Top-Liste (1 - 1000).
+  top-size: 50
+
+  # Aktualisierungsintervall der Top-Liste in Sekunden (5 - 3600).
+  top-refresh-seconds: 60
+
+vault:
+  # EconomySystem als Vault-Wirtschaftsanbieter registrieren.
+  # Ohne installiertes Vault bleibt die Einstellung wirkungslos; mit Vault
+  # können Shops, Scoreboards & Co. Guthaben lesen und schreiben.
+  enabled: true
+
+  # Priorität der Registrierung, falls mehrere Anbieter aktiv sind.
+  # LOWEST | LOW | NORMAL | HIGH | HIGHEST
+  priority: HIGH
+
+  # Maximale Wartezeit für Vault-Zugriffe auf noch nicht geladene Konten
+  # in Millisekunden (500 - 30000).
+  timeout-ms: 3000
+
+  # Einzahlungsname für Vault; leer = currency.name.
+  currency-name-singular: ""
 
 notifications:
   # Eigenes Guthaben kurz nach dem Beitritt im Chat anzeigen
@@ -168,10 +214,16 @@ network:
 
   # Wie erfahren Server von Änderungen anderer Server?
   #   NONE | TTL | PLUGIN_MESSAGE | REDIS
+  # Derzeit ohne Wirkung: Cache-Invalidierung ist noch nicht umgesetzt.
   invalidation: "TTL"
 
   # Lebensdauer zwischengespeicherter Kontostände in Sekunden.
+  # Derzeit ohne Wirkung: der Kontencache hat noch keine TTL-Prüfung.
   cache-ttl-seconds: 60
+
+  # Laufzeit der Lease für den Zinszyklus in Sekunden (60 - 3600).
+  # Nach einem Absturz übernimmt der nächste Server, sobald sie abläuft.
+  lease-ttl-seconds: 300
 
   # Serverübergreifende Überweisung (11.2).
   transfer:
@@ -179,6 +231,8 @@ network:
     # PROXY -> Ziel darf auf einem anderen Server online sein
     # ANY   -> Ziel darf offline sein (Konto per UUID)
     mode: "LOCAL"
+    # Derzeit ohne Wirkung: eine Rückbuchung nach Timeout ist noch nicht
+    # umgesetzt (nur für den Netzwerkbetrieb vorgesehen).
     timeout-seconds: 30
 
   # Rate-Limits je Spieler und Pfad (11.7); der Router erzwingt sie vor der
@@ -189,14 +243,33 @@ network:
       count: 10
       seconds: 60
       cooldown-seconds: 3
-    credit.take:
-      count: 3
-      seconds: 300
-      cooldown-seconds: 10
-    admin.balance:
-      count: 60
+    credit:
+      take:
+        count: 3
+        seconds: 300
+        cooldown-seconds: 10
+    admin:
+      balance:
+        count: 60
+        seconds: 60
+        cooldown-seconds: 0
+    gui:
+      count: 0
       seconds: 60
-      cooldown-seconds: 0
+      cooldown-seconds: 2
+    balance:
+      top:
+        count: 0
+        seconds: 60
+        cooldown-seconds: 2
+
+audit:
+  # Audit-Einträge für Fernbuchungen schreiben (nur MySQL).
+  enabled: true
+
+  # Aufbewahrung in Tagen (0 - 3650); 0 = unbegrenzt.
+  # Die Aufräumaufgabe läuft täglich für den aktuellen Scope.
+  retention-days: 0
 
 storage:
   # Speicherart: YAML oder MYSQL
@@ -205,6 +278,10 @@ storage:
   # Intervall in Sekunden, in dem geänderte Konten gespeichert werden.
   # 0 = kein automatisches Speichern (nur beim Verlassen/Stoppen des Servers)
   save-interval-seconds: 300
+
+  # Maximale Wartezeit beim Stoppen in Sekunden (5 - 600), bis offene
+  # Speichervorgänge abgebrochen werden.
+  shutdown-timeout-seconds: 60
 
   yaml:
     # Ordner (relativ zum Plugin-Ordner), in dem die Konten liegen
@@ -230,3 +307,17 @@ storage:
 
     connection-timeout-ms: 5000
     socket-timeout-ms: 30000
+
+    # Wartezeit nach einem Verbindungsfehler in Sekunden (1 - 300).
+    retry-seconds: 5
+
+config:
+  # Anzahl der Sicherungen je Konfigurationsdatei (1 - 20).
+  # Die neueste Sicherung behält den bisherigen Dateinamen,
+  # ältere liegen als .1, .2, ... daneben.
+  backup-count: 1
+
+commands:
+  # Maximale Länge einer --reason-Begründung (1 - 160).
+  # 160 ist die Obergrenze der Audit-Spalte in MySQL.
+  reason-max-length: 160

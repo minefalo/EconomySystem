@@ -17,22 +17,33 @@ import java.util.Map;
  */
 public final class CommandParser {
 
-    /** Maximale Länge einer Begründung (Abschnitt 6.4). */
-    private static final int MAX_REASON_LENGTH = 160;
+    /** Standard-Maximallänge einer Begründung (Abschnitt 6.4). */
+    private static final int DEFAULT_REASON_MAX_LENGTH = 160;
 
     private static final String PERMISSION_AUDIT = CommandPermissions.PREFIX + "admin.audit";
     private static final String PERMISSION_NETWORK = CommandPermissions.PREFIX + "admin.network";
 
     private final CommandTree tree;
     private final Map<String, String> subcommandWords;
+    private final int maxReasonLength;
 
     /**
      * @param tree            Befehlsbaum, gegen den Pfade aufgelöst werden
      * @param subcommandWords Synonym → kanonisches Wort aus {@code commands.yml}
      */
     public CommandParser(CommandTree tree, Map<String, String> subcommandWords) {
+        this(tree, subcommandWords, DEFAULT_REASON_MAX_LENGTH);
+    }
+
+    /**
+     * @param maxReasonLength Maximallänge einer {@code --reason}-Begründung
+     *                        ({@code commands.reason-max-length})
+     */
+    public CommandParser(CommandTree tree, Map<String, String> subcommandWords,
+                         int maxReasonLength) {
         this.tree = tree;
         this.subcommandWords = subcommandWords == null ? Map.of() : Map.copyOf(subcommandWords);
+        this.maxReasonLength = Math.max(1, Math.min(160, maxReasonLength));
     }
 
     // ------------------------------------------------------------------
@@ -183,7 +194,7 @@ public final class CommandParser {
         return path.equals("admin") || path.startsWith("admin.");
     }
 
-    private static String sanitize(Flag flag, String value) {
+    private String sanitize(Flag flag, String value) {
         if (!flag.name().equals("reason")) {
             return value;
         }
@@ -195,7 +206,9 @@ public final class CommandParser {
             }
         }
         String result = cleaned.toString();
-        return result.length() > MAX_REASON_LENGTH ? result.substring(0, MAX_REASON_LENGTH) : result;
+        return result.length() > maxReasonLength
+                ? result.substring(0, maxReasonLength)
+                : result;
     }
 
     // ------------------------------------------------------------------

@@ -34,17 +34,6 @@ public final class BalanceTopModule extends AbstractModule {
         return "/eco balance top [<seite>]";
     }
 
-    /**
-     * Die Bestenliste stößt einen Aggregat-Lesevorgang an. Zwei Sekunden
-     * Mindestabstand verhindern, dass ein Makro den einzigen Storage-Thread
-     * dauerhaft mit Ranglisten-Abfragen belegt (SICHERHEITSAUDIT, ROT-2);
-     * {@code economysystem.bypass.cooldown} hebt den Abstand auf.
-     */
-    @Override
-    public long cooldownMillis() {
-        return 2_000L;
-    }
-
     @Override
     public CommandResult execute(CommandContext context) {
         CommandSender sender = context.sender();
@@ -74,7 +63,8 @@ public final class BalanceTopModule extends AbstractModule {
         int maxEntries = plugin.settings().leaderboard().maxEntries();
         int page = requestedPage;
 
-        economy.topAsync(maxEntries).whenComplete((entries, error) -> {
+        economy.topAsync(maxEntries, plugin.settings().leaderboard().includeZeroBalances())
+                .whenComplete((entries, error) -> {
             if (!plugin.isEnabled()) {
                 return;
             }

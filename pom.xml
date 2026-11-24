@@ -95,6 +95,10 @@
             <id>placeholderapi</id>
             <url>https://repo.extendedclip.com/content/repositories/placeholderapi/</url>
         </repository>
+        <repository>
+            <id>jitpack.io</id>
+            <url>https://jitpack.io</url>
+        </repository>
     </repositories>
 
     <!-- Der Testpfad admin.test.interest-cycle ist ein reguläres Modul
@@ -114,6 +118,21 @@
             <artifactId>placeholderapi</artifactId>
             <version>2.12.3</version>
             <scope>provided</scope>
+        </dependency>
+        <!-- Vault ist optional: zur Laufzeit wird nur gegen die API gebunden,
+             die Klassen werden nicht ins JAR geschattet. Bukkit kommt aus der
+             Paper-API, damit nur eine Bukkit-Version auf dem Klassenpfad liegt. -->
+        <dependency>
+            <groupId>com.github.MilkBowl</groupId>
+            <artifactId>VaultAPI</artifactId>
+            <version>1.7</version>
+            <scope>provided</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.bukkit</groupId>
+                    <artifactId>bukkit</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- Unit-Tests: Rechte-Matrix der Befehle (Commands.md, Abschnitt 7). -->
