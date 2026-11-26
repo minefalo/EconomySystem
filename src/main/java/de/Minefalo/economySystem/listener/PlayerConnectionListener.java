@@ -1,6 +1,7 @@
 package de.Minefalo.economySystem.listener;
 
 import de.Minefalo.economySystem.EconomySystem;
+import de.Minefalo.economySystem.command.CommandPermissions;
 import de.Minefalo.economySystem.config.Settings;
 import de.Minefalo.economySystem.economy.EconomyService;
 import org.bukkit.entity.Player;
@@ -26,7 +27,9 @@ public final class PlayerConnectionListener implements Listener {
         economy.preload(player);
 
         Settings.Notifications notifications = plugin.settings().notifications();
-        if (!notifications.balanceOnJoin() || !player.hasPermission("economysystem.balance")) {
+        if (!notifications.balanceOnJoin()
+                || !CommandPermissions.granted(plugin.permissions(), player,
+                        "economysystem.balance")) {
             return;
         }
 

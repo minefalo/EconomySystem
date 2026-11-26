@@ -47,15 +47,10 @@ import java.util.regex.Pattern;
  * bestätigt keine bestätigungspflichtige Aktion: Verlangt der Pfad
  * {@code --confirm}, zeigt die GUI zuerst einen eigenen Bestätigungsdialog.
  * Items ohne passende Permission werden nicht angezeigt. Werte werden nie
- * über den Chat eingegeben: ganze Zahlen über einen Regler aus Glasscheiben,
- * Texte über einen Amboss und Spieler über eine durchsuchbare Kopfauswahl.</p>
+ * über den Chat eingegeben: Zahlen und Texte über einen Amboss und Spieler
+ * über eine durchsuchbare Kopfauswahl.</p>
  */
 public final class GuiManager implements Listener {
-
-    private static final int SLIDER_SIZE = 36;
-    private static final int SLIDER_TRACK_FIRST = 9;
-    private static final int SLIDER_TRACK_LAST = 17;
-    private static final int SLIDER_STEP_BUTTONS = 10;
 
     private static final int PICKER_SIZE = 54;
     private static final int PICKER_FIRST = 9;
@@ -65,13 +60,15 @@ public final class GuiManager implements Listener {
 
     /** Höchstlänge einer Antwort; sie wird genau ein Argument der Befehlszeile. */
     private static final int ANSWER_MAX_LENGTH = 64;
-    private static final Pattern ANSWER_NUMBER = Pattern.compile("-?\\d{1,19}");
+    /** Ziffern mit höchstens einem Dezimalpunkt, wie der Amboss sie liefert. */
+    private static final Pattern ANSWER_NUMBER = Pattern.compile("\\d{1,19}(?:\\.\\d{1,8})?");
     /** Spielernamen inkl. der Punkt-Präfixe von Bedrock-/Floodgate-Konten. */
     private static final Pattern ANSWER_PLAYER = Pattern.compile("[A-Za-z0-9_.]{1,16}");
 
     private static final int CONFIRM_SIZE = 27;
     private static final int CONFIRM_ACCEPT = 11;
     private static final int CONFIRM_CANCEL = 15;
+    private static final int PICKER_CONFIRM_HEAD = 13;
 
     private final EconomySystem plugin;
     private final GuiConfig config;
@@ -86,6 +83,7 @@ public final class GuiManager implements Listener {
      */
     private enum AnvilMode {
         TEXT,
+        NUMBER,
         SEARCH
     }
 
@@ -353,7 +351,7 @@ public final class GuiManager implements Listener {
 
         GuiConfig.Input input = session.current();
         switch (input.type()) {
-            case NUMBER -> openSlider(player, session, input);
+            case NUMBER -> openAnvil(player, session, input);
             case TEXT -> openAnvil(player, session, input);
             case PLAYER -> openPicker(player, session);
         }
@@ -380,128 +378,18 @@ public final class GuiManager implements Listener {
     }
 
     // ------------------------------------------------------------
-    // Regler für ganze Zahlen
-    // ------------------------------------------------------------
-
-    private void openSlider(Player player, GuiSession session, GuiConfig.Input input) {
-        GuiHolder holder = GuiHolder.input(GuiHolder.Kind.SLIDER, session);
-        Inventory inventory = Bukkit.createInventory(holder, SLIDER_SIZE, Text.component(input.prompt()));
-        holder.inventory(inventory);
-        renderSlider(inventory, session, input);
-        player.openInventory(inventory);
-    }
-
-    private void renderSlider(Inventory inventory, GuiSession session, GuiConfig.Input input) {
-        ItemStack filler = item(Material.BLACK_STAINED_GLASS_PANE, Component.text(" "), List.of());
-        for (int slot = 0; slot < SLIDER_SIZE; slot++) {
-            inventory.setItem(slot, filler);
-        }
-
-        int position = trackPosition(session.value(), input);
-        for (int index = 0; index <= SLIDER_TRACK_LAST - SLIDER_TRACK_FIRST; index++) {
-            Material material = index == position
-                    ? Material.YELLOW_STAINED_GLASS_PANE
-                    : index < position
-                            ? Material.LIME_STAINED_GLASS_PANE
-                            : Material.GRAY_STAINED_GLASS_PANE;
-            long value = trackValue(index, input);
-            inventory.setItem(SLIDER_TRACK_FIRST + index,
-                    item(material, label("gui-slider-track", "value", String.valueOf(value)), List.of()));
-        }
-
-        long step = input.step();
-        inventory.setItem(19, item(Material.RED_STAINED_GLASS_PANE,
-                label("gui-slider-decrease", "amount", String.valueOf(step * SLIDER_STEP_BUTTONS)),
-                List.of(label("gui-slider-decrease-hint"))));
-        inventory.setItem(20, item(Material.RED_STAINED_GLASS_PANE,
-                label("gui-slider-decrease", "amount", String.valueOf(step)),
-                List.of(label("gui-slider-decrease-hint"))));
-        inventory.setItem(22, item(Material.PAPER,
-                label("gui-slider-value", "value", String.valueOf(session.value())),
-                List.of(label("gui-slider-hint"))));
-        inventory.setItem(24, item(Material.LIME_STAINED_GLASS_PANE,
-                label("gui-slider-increase", "amount", String.valueOf(step)),
-                List.of(label("gui-slider-increase-hint"))));
-        inventory.setItem(25, item(Material.LIME_STAINED_GLASS_PANE,
-                label("gui-slider-increase", "amount", String.valueOf(step * SLIDER_STEP_BUTTONS)),
-                List.of(label("gui-slider-increase-hint"))));
-
-        inventory.setItem(28, item(Material.BARRIER, label("gui-slider-cancel"), List.of()));
-        inventory.setItem(31, item(Material.LIME_CONCRETE, label("gui-slider-confirm"), List.of()));
-        inventory.setItem(34, item(Material.CLOCK, label("gui-slider-reset"), List.of()));
-    }
-
-    private void clickSlider(Player player, GuiHolder holder, int slot) {
-        GuiSession session = holder.session();
-        if (session == null || sessions.get(player.getUniqueId()) != session || session.finished()) {
-            return;
-        }
-        GuiConfig.Input input = session.current();
-        if (input.type() != GuiConfig.Input.Type.NUMBER) {
-            return;
-        }
-
-        long step = input.step();
-        switch (slot) {
-            case 19 -> session.value(snap(session.value() - step * SLIDER_STEP_BUTTONS, input));
-            case 20 -> session.value(snap(session.value() - step, input));
-            case 24 -> session.value(snap(session.value() + step, input));
-            case 25 -> session.value(snap(session.value() + step * SLIDER_STEP_BUTTONS, input));
-            case 28 -> {
-                holder.handled(true);
-                player.closeInventory();
-                cancelSession(player, session, true);
-                return;
-            }
-            case 31 -> {
-                holder.handled(true);
-                player.closeInventory();
-                session.answer(String.valueOf(session.value()));
-                nextTick(() -> beginInput(player, session));
-                return;
-            }
-            case 34 -> session.value(snap(input.initial(), input));
-            default -> {
-                if (slot < SLIDER_TRACK_FIRST || slot > SLIDER_TRACK_LAST) {
-                    return;
-                }
-                session.value(trackValue(slot - SLIDER_TRACK_FIRST, input));
-            }
-        }
-
-        renderSlider(holder.getInventory(), session, input);
-    }
-
-    private static int trackPosition(long value, GuiConfig.Input input) {
-        int steps = SLIDER_TRACK_LAST - SLIDER_TRACK_FIRST;
-        double fraction = (double) (value - input.min()) / (double) (input.max() - input.min());
-        long index = Math.round(fraction * steps);
-        return (int) Math.max(0, Math.min(steps, index));
-    }
-
-    private static long trackValue(int index, GuiConfig.Input input) {
-        int steps = SLIDER_TRACK_LAST - SLIDER_TRACK_FIRST;
-        double fraction = (double) index / steps;
-        long raw = input.min() + Math.round((input.max() - input.min()) * fraction);
-        return snap(raw, input);
-    }
-
-    private static long snap(long value, GuiConfig.Input input) {
-        long clamped = Math.max(input.min(), Math.min(input.max(), value));
-        long offset = clamped - input.min();
-        long snapped = input.min() + Math.round((double) offset / input.step()) * input.step();
-        if (snapped > input.max()) {
-            snapped = input.min() + ((input.max() - input.min()) / input.step()) * input.step();
-        }
-        return Math.max(input.min(), Math.min(input.max(), snapped));
-    }
-
-    // ------------------------------------------------------------
-    // Amboss für Texte
+    // Amboss für Zahlen und Texte
     // ------------------------------------------------------------
 
     private void openAnvil(Player player, GuiSession session, GuiConfig.Input input) {
-        openAnvil(player, session, AnvilMode.TEXT, input.prompt(), "");
+        openAnvil(player, session, input, "");
+    }
+
+    private void openAnvil(Player player, GuiSession session, GuiConfig.Input input, String preset) {
+        AnvilMode mode = input.type() == GuiConfig.Input.Type.NUMBER
+                ? AnvilMode.NUMBER
+                : AnvilMode.TEXT;
+        openAnvil(player, session, mode, input.prompt(), preset);
     }
 
     private void openSearch(Player player, GuiSession session) {
@@ -530,7 +418,7 @@ public final class GuiManager implements Listener {
 
             Inventory top = created.getTopInventory();
             top.clear();
-            top.setItem(0, nametag(preset));
+            top.setItem(0, nametag(preset, mode));
             created.setRepairCost(0);
             created.setRepairItemCountCost(0);
             created.bypassEnchantmentLevelRestriction(true);
@@ -551,12 +439,14 @@ public final class GuiManager implements Listener {
         anvils.put(player.getUniqueId(), new AnvilTarget(session, mode));
     }
 
-    private ItemStack nametag(String preset) {
+    private ItemStack nametag(String preset, AnvilMode mode) {
         ItemStack tag = new ItemStack(Material.NAME_TAG);
         ItemMeta meta = tag.getItemMeta();
         if (meta != null) {
             meta.displayName(Component.text(preset == null || preset.isBlank() ? " " : preset));
-            meta.lore(List.of(label("gui-anvil-hint")));
+            meta.lore(List.of(label(mode == AnvilMode.NUMBER
+                    ? "gui-anvil-number-hint"
+                    : "gui-anvil-hint")));
             tag.setItemMeta(meta);
         }
         return tag;
@@ -581,24 +471,10 @@ public final class GuiManager implements Listener {
         clearAnvil(view);
         player.closeInventory();
 
-        if (text == null || text.isBlank()) {
-            plugin.messages().send(player, "gui-input-empty");
-            // Amboss erneut öffnen, damit die Eingabe nicht verloren geht.
-            nextTick(() -> {
-                if (!player.isOnline()) {
-                    return;
-                }
-                if (target.mode() == AnvilMode.SEARCH) {
-                    openSearch(player, session);
-                } else {
-                    openAnvil(player, session, session.current());
-                }
-            });
-            return;
-        }
+        String value = text == null ? "" : text.trim();
 
-        String value = text.trim();
         if (target.mode() == AnvilMode.SEARCH) {
+            // Leer oder nur Leerzeichen löscht den Suchfilter.
             GuiSession.Picker picker = session.picker();
             if (picker != null) {
                 picker.search(value);
@@ -608,8 +484,109 @@ public final class GuiManager implements Listener {
             return;
         }
 
+        if (target.mode() == AnvilMode.NUMBER) {
+            acceptNumber(player, session, value);
+            return;
+        }
+
+        if (value.isEmpty()) {
+            plugin.messages().send(player, "gui-input-empty");
+            // Amboss erneut öffnen, damit die Eingabe nicht verloren geht.
+            nextTick(() -> {
+                if (player.isOnline()) {
+                    openAnvil(player, session, session.current());
+                }
+            });
+            return;
+        }
+
         session.answer(value);
         nextTick(() -> beginInput(player, session));
+    }
+
+    /**
+     * Übernimmt eine Zahl aus dem Amboss. Alle Zeichen außer Ziffern werden
+     * verworfen; der erste Punkt oder das erste Komma wird zum
+     * Dezimalpunkt. Aus {@code "4h5 7.4"} wird so {@code 457.4}, aus
+     * {@code "1+6/d,o84"} wird {@code 16.84}. Liegt der Wert außerhalb von
+     * {@code min}/{@code max}, bleibt die gefilterte Eingabe im Amboss
+     * stehen und kann korrigiert werden.
+     */
+    private void acceptNumber(Player player, GuiSession session, String raw) {
+        GuiConfig.Input input = session.current();
+        String value = filterNumber(raw);
+        if (value.isEmpty()) {
+            plugin.messages().send(player, "gui-input-empty");
+            reopenAnvil(player, session, "");
+            return;
+        }
+
+        BigDecimal number;
+        try {
+            number = new BigDecimal(value);
+        } catch (NumberFormatException exception) {
+            plugin.messages().send(player, "gui-input-number-invalid", "input", value);
+            reopenAnvil(player, session, value);
+            return;
+        }
+
+        if (!ANSWER_NUMBER.matcher(value).matches()) {
+            plugin.messages().send(player, "gui-input-number-invalid", "input", value);
+            reopenAnvil(player, session, value);
+            return;
+        }
+
+        if (number.compareTo(input.min()) < 0 || number.compareTo(input.max()) > 0) {
+            plugin.messages().send(player, "gui-input-number-range",
+                    "min", input.min().toPlainString(),
+                    "max", input.max().toPlainString());
+            reopenAnvil(player, session, value);
+            return;
+        }
+
+        session.answer(number.stripTrailingZeros().toPlainString());
+        nextTick(() -> beginInput(player, session));
+    }
+
+    private void reopenAnvil(Player player, GuiSession session, String preset) {
+        GuiConfig.Input input = session.current();
+        nextTick(() -> {
+            if (player.isOnline()) {
+                openAnvil(player, session, input, preset);
+            }
+        });
+    }
+
+    /**
+     * Entfernt alle Zeichen außer Ziffern. Der erste Punkt oder das erste
+     * Komma wird zum Dezimalpunkt, weitere Trennzeichen entfallen. Eine
+     * führende Trennung wird zu {@code 0.}, eine abschließende entfällt.
+     */
+    private static String filterNumber(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        StringBuilder number = new StringBuilder(raw.length());
+        boolean separator = false;
+        for (int index = 0; index < raw.length(); index++) {
+            char character = raw.charAt(index);
+            if (character >= '0' && character <= '9') {
+                number.append(character);
+            } else if ((character == '.' || character == ',') && !separator) {
+                number.append('.');
+                separator = true;
+            }
+        }
+        if (number.length() == 0) {
+            return "";
+        }
+        if (number.charAt(0) == '.') {
+            number.insert(0, '0');
+        }
+        if (number.charAt(number.length() - 1) == '.') {
+            number.deleteCharAt(number.length() - 1);
+        }
+        return number.toString();
     }
 
     /**
@@ -704,6 +681,9 @@ public final class GuiManager implements Listener {
         }
 
         inventory.setItem(45, item(Material.BARRIER, label("gui-picker-cancel"), List.of()));
+        inventory.setItem(46, item(Material.BUCKET,
+                label("gui-picker-reset"),
+                List.of(label("gui-picker-reset-hint"))));
         inventory.setItem(48, item(Material.ARROW, label("gui-picker-previous"), List.of()));
         inventory.setItem(49, item(Material.PAPER,
                 label("gui-picker-page",
@@ -775,6 +755,11 @@ public final class GuiManager implements Listener {
                 cancelSession(player, session, true);
                 return;
             }
+            case 46 -> {
+                picker.reset();
+                renderPicker(holder.getInventory(), session);
+                return;
+            }
             case 48 -> {
                 if (picker.page() > 0) {
                     picker.page(picker.page() - 1);
@@ -803,9 +788,66 @@ public final class GuiManager implements Listener {
         }
 
         holder.handled(true);
+        picker.selected(visible.get(index));
         player.closeInventory();
-        session.answer(visible.get(index).name());
-        nextTick(() -> beginInput(player, session));
+        nextTick(() -> openPlayerConfirm(player, session));
+    }
+
+    /**
+     * Zeigt die gewählte Spielerauswahl als eigene, abbrechbare Eingabe.
+     * Erst der Klick auf "Bestätigen" übernimmt den Namen; Abbrechen führt
+     * zur Auswahl zurück.
+     */
+    private void openPlayerConfirm(Player player, GuiSession session) {
+        GuiSession.Picker picker = session.picker();
+        if (picker == null || picker.selected() == null) {
+            nextTick(() -> openPicker(player, session));
+            return;
+        }
+        AccountData selected = picker.selected();
+
+        GuiHolder holder = GuiHolder.input(GuiHolder.Kind.PICKER_CONFIRM, session);
+        Inventory inventory = Bukkit.createInventory(holder, CONFIRM_SIZE,
+                Text.component(plugin.messages().raw("gui-picker-confirm-title")));
+        holder.inventory(inventory);
+
+        ItemStack filler = item(Material.BLACK_STAINED_GLASS_PANE, Component.text(" "), List.of());
+        for (int slot = 0; slot < CONFIRM_SIZE; slot++) {
+            inventory.setItem(slot, filler);
+        }
+        inventory.setItem(PICKER_CONFIRM_HEAD, playerHead(selected, false));
+        inventory.setItem(CONFIRM_ACCEPT, item(Material.LIME_CONCRETE,
+                label("gui-picker-confirm-accept"),
+                List.of(label("gui-picker-confirm-hint", "player", selected.name()))));
+        inventory.setItem(CONFIRM_CANCEL, item(Material.RED_CONCRETE,
+                label("gui-picker-confirm-cancel"),
+                List.of(label("gui-picker-confirm-back-hint"))));
+        player.openInventory(inventory);
+    }
+
+    private void clickPlayerConfirm(Player player, GuiHolder holder, int slot) {
+        if (slot != CONFIRM_ACCEPT && slot != CONFIRM_CANCEL) {
+            return;
+        }
+        GuiSession session = holder.session();
+        if (session == null || sessions.get(player.getUniqueId()) != session || session.finished()) {
+            return;
+        }
+        GuiSession.Picker picker = session.picker();
+        if (picker == null || picker.selected() == null) {
+            return;
+        }
+
+        String selected = picker.selected().name();
+        picker.selected(null);
+        holder.handled(true);
+        player.closeInventory();
+        if (slot == CONFIRM_ACCEPT) {
+            session.answer(selected);
+            nextTick(() -> beginInput(player, session));
+            return;
+        }
+        nextTick(() -> openPicker(player, session));
     }
 
     private List<AccountData> visibleAccounts(GuiSession.Picker picker) {
@@ -861,15 +903,46 @@ public final class GuiManager implements Listener {
     }
 
     private ItemStack playerHead(AccountData account) {
+        return playerHead(account, true);
+    }
+
+    /**
+     * Kopf eines Kontos mit allen verfügbaren Angaben im Tooltip: Status,
+     * Guthaben, Kreditrahmen, offene Kredite und laufende Kredite.
+     */
+    private ItemStack playerHead(AccountData account, boolean selectable) {
         ItemStack head = new ItemStack(Material.PLAYER_HEAD);
         ItemMeta meta = head.getItemMeta();
         if (meta instanceof SkullMeta skull) {
+            Currency currency = plugin.settings().currency();
+            boolean online = plugin.getServer().getPlayerExact(account.name()) != null;
+            List<Component> lore = new ArrayList<>();
+            lore.add(label(online
+                    ? "gui-picker-head-status-online"
+                    : "gui-picker-head-status-offline"));
+            lore.add(label("gui-picker-head-balance",
+                    "balance", currency.format(account.balance())));
+
+            CreditService credit = plugin.creditService();
+            Account target = plugin.economy() == null
+                    ? null
+                    : plugin.economy().find(account.name()).orElse(null);
+            if (credit != null && target != null) {
+                lore.add(label("gui-picker-head-limit",
+                        "limit", currency.format(credit.maxLoan(target))));
+                lore.add(label("gui-picker-head-debt",
+                        "debt", currency.format(credit.outstanding(account.uniqueId()))));
+                lore.add(label("gui-picker-head-loans",
+                        "loans", String.valueOf(credit.activeLoanCount(account.uniqueId())),
+                        "max", String.valueOf(plugin.settings().credits().maxLoans())));
+            }
+            lore.add(label(selectable
+                    ? "gui-picker-head-click"
+                    : "gui-picker-confirm-selected"));
+
             skull.setOwningPlayer(Bukkit.getOfflinePlayer(account.uniqueId()));
             skull.displayName(label("gui-picker-head-name", "player", account.name()));
-            skull.lore(List.of(
-                    label("gui-picker-head-balance",
-                            "balance", plugin.settings().currency().format(account.balance())),
-                    label("gui-picker-head-click")));
+            skull.lore(lore);
             head.setItemMeta(skull);
         }
         return head;
@@ -896,8 +969,8 @@ public final class GuiManager implements Listener {
             event.setCancelled(true);
             switch (holder.kind()) {
                 case MENU -> clickMenu(player, holder, event.getSlot());
-                case SLIDER -> clickSlider(player, holder, event.getSlot());
                 case PICKER -> clickPicker(player, holder, event.getSlot());
+                case PICKER_CONFIRM -> clickPlayerConfirm(player, holder, event.getSlot());
                 case CONFIRM -> clickConfirm(player, holder, event.getSlot());
             }
             return;
@@ -957,6 +1030,22 @@ public final class GuiManager implements Listener {
         }
 
         if (!(event.getInventory().getHolder() instanceof GuiHolder holder)) {
+            return;
+        }
+        if (holder.kind() == GuiHolder.Kind.PICKER_CONFIRM) {
+            // Schließen ohne Klick führt zurück zur Auswahl.
+            if (holder.handled()) {
+                return;
+            }
+            GuiSession session = holder.session();
+            if (session == null || sessions.get(player.getUniqueId()) != session) {
+                return;
+            }
+            GuiSession.Picker picker = session.picker();
+            if (picker != null) {
+                picker.selected(null);
+            }
+            nextTick(() -> openPicker(player, session));
             return;
         }
         if (holder.kind() == GuiHolder.Kind.CONFIRM) {
@@ -1094,8 +1183,8 @@ public final class GuiManager implements Listener {
 
     private static boolean inRange(GuiConfig.Input input, String answer) {
         try {
-            long value = Long.parseLong(answer);
-            return value >= input.min() && value <= input.max();
+            BigDecimal value = new BigDecimal(answer);
+            return value.compareTo(input.min()) >= 0 && value.compareTo(input.max()) <= 0;
         } catch (NumberFormatException exception) {
             return false;
         }
@@ -1118,8 +1207,9 @@ public final class GuiManager implements Listener {
         return result;
     }
 
-    private static boolean hasAccess(Player player, String permission) {
-        return permission == null || permission.isBlank() || player.hasPermission(permission);
+    private boolean hasAccess(Player player, String permission) {
+        return permission == null || permission.isBlank()
+                || plugin.permissions().has(player, permission);
     }
 
     private void nextTick(Runnable action) {

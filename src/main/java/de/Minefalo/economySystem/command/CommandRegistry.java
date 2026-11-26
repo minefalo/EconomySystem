@@ -3,6 +3,7 @@ package de.Minefalo.economySystem.command;
 import de.Minefalo.economySystem.EconomySystem;
 import de.Minefalo.economySystem.config.CommandsConfig;
 import de.Minefalo.economySystem.config.Settings;
+import de.Minefalo.economySystem.permission.PermissionService;
 import de.Minefalo.economySystem.storage.StorageException;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -111,7 +112,8 @@ public final class CommandRegistry implements CommandExecutor, TabCompleter {
         this.shortcutPaths = shortcuts;
         this.parser = new CommandParser(tree,
                 resolveSubcommandWords(commandsConfig.subcommandWords(), tree, warning),
-                plugin.settings().reasonMaxLength());
+                plugin.settings().reasonMaxLength(),
+                plugin.permissions());
     }
 
     /**
@@ -244,7 +246,7 @@ public final class CommandRegistry implements CommandExecutor, TabCompleter {
 
         for (Registration registration : registrations.values()) {
             String commandName = registration.command().getName();
-            Predicate<CommandSender> visible = visibleAt(tree,
+            Predicate<CommandSender> visible = visibleAt(plugin.permissions(), tree,
                     shortcutPaths.getOrDefault(normalizeWord(commandName), List.of()));
             for (String alias : configured.get(commandName)) {
                 registerDynamic(alias, registration.command().getDescription(),
@@ -265,11 +267,20 @@ public final class CommandRegistry implements CommandExecutor, TabCompleter {
      * taucht damit ohne Adminrecht gar nicht erst auf.
      */
     static Predicate<CommandSender> visibleAt(CommandTree tree, List<String> segments) {
+        return visibleAt(null, tree, segments);
+    }
+
+    /**
+     * Wie {@link #visibleAt(CommandTree, List)}, berücksichtigt aber
+     * zusätzlich die Rollen aus der {@code roles.yml}.
+     */
+    static Predicate<CommandSender> visibleAt(PermissionService permissions, CommandTree tree,
+                                              List<String> segments) {
         CommandTree.Node node = node(tree, segments);
         if (node == null) {
             return sender -> true;
         }
-        return sender -> CommandPermissions.granted(sender, node);
+        return sender -> CommandPermissions.granted(permissions, sender, node);
     }
 
     /**
@@ -505,7 +516,7 @@ public final class CommandRegistry implements CommandExecutor, TabCompleter {
         }
 
         // Stufe 4 - Permission: alter und neuer Knoten als ODER (Abschnitt 7.4).
-        if (!CommandPermissions.granted(sender, node)) {
+        if (!CommandPermissions.granted(plugin.permissions(), sender, node)) {
             sendError(sender, "no-permission", "no-permission");
             return true;
         }
@@ -613,7 +624,8 @@ public final class CommandRegistry implements CommandExecutor, TabCompleter {
 
         // Mindestabstand des Moduls.
         long cooldown = node.module().cooldownMillis();
-        boolean cooldownActive = cooldown > 0 && !sender.hasPermission(BYPASS_COOLDOWN);
+        boolean cooldownActive = cooldown > 0
+                && !plugin.permissions().has(sender, BYPASS_COOLDOWN);
         Long cooldownUntil = cooldownActive
                 ? cooldowns.get(cooldownKey(sender, node.path()))
                 : null;
@@ -628,12 +640,14 @@ public final class CommandRegistry implements CommandExecutor, TabCompleter {
             while (!window.isEmpty() && window.peekFirst() <= now - windowMillis) {
                 window.pollFirst();
             }
-            if (limit.rate().count() > 0 && !sender.hasPermission(BYPASS_RATE_LIMIT)
+            if (limit.rate().count() > 0
+                    && !plugin.permissions().has(sender, BYPASS_RATE_LIMIT)
                     && window.size() >= limit.rate().count()) {
                 limitWait = window.peekFirst() + windowMillis - now;
             }
             long minGap = Math.max(0L, limit.rate().cooldownSeconds()) * 1000L;
-            if (minGap > 0L && !sender.hasPermission(BYPASS_COOLDOWN) && !window.isEmpty()) {
+            if (minGap > 0L && !plugin.permissions().has(sender, BYPASS_COOLDOWN)
+                    && !window.isEmpty()) {
                 limitWait = Math.max(limitWait, window.peekLast() + minGap - now);
             }
         }
@@ -739,16 +753,18 @@ public final class CommandRegistry implements CommandExecutor, TabCompleter {
             // Noch kein Modul erreicht: nur Unterpfade vorschlagen, und nur
             // wenn der Pfad bis hierher vollständig aufgelöst ist.
             return walk.depth() == head.size()
-                    ? filter(CommandPermissions.visibleSegments(node, sender), prefix)
+                    ? filter(CommandPermissions.visibleSegments(
+                            plugin.permissions(), node, sender), prefix)
                     : List.of();
         }
-        if (!CommandPermissions.visible(matched, sender)) {
+        if (!CommandPermissions.visible(plugin.permissions(), matched, sender)) {
             return List.of();
         }
 
         List<String> options = new ArrayList<>();
         if (matchedDepth == head.size()) {
-            options.addAll(CommandPermissions.visibleSegments(matched, sender));
+            options.addAll(CommandPermissions.visibleSegments(
+                    plugin.permissions(), matched, sender));
         }
 
         List<String> moduleArgs = new ArrayList<>(head.subList(matchedDepth, head.size()));

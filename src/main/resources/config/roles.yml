@@ -1,0 +1,40 @@
+# ==========================================================
+#  EconomySystem - Rollen mit vordefinierten Permissions
+# ==========================================================
+# Eine Rolle ist selbst ein Permission-Knoten. Wer diesen
+# Knoten besitzt (z. B. über LuckPerms), erhält bei allen
+# Rechteprüfungen dieses Plugins zusätzlich die hier
+# eingetragenen Permissions.
+#
+# Aufbau:
+#   roles:
+#     <rollen-knoten>:
+#       permissions:
+#         - <permission-1>
+#         - <permission-2>
+#
+# Beispiel:
+#   roles:
+#     economysystem.role.admin:
+#       permissions:
+#         - economysystem.command.admin
+#         - economysystem.command.info
+#         - economysystem.pay.remote
+#
+# Regeln:
+#   - Groß-/Kleinschreibung wird nicht unterschieden.
+#   - Eine Rolle darf eine andere Rolle aufführen; deren
+#     Permissions werden übernommen (maximal 10 Ebenen).
+#   - Wildcards sind erlaubt: "economysystem.command.*" und "*".
+#   - Statt "permissions:" darf unter einer Rolle auch direkt
+#     eine Liste stehen.
+#   - Ein Rollen-Knoten wird nicht automatisch vergeben. Er muss
+#     wie jede andere Permission gesetzt werden, z. B.:
+#       lp group admin permission set economysystem.role.admin true
+#   - Ungültige oder leere Einträge werden beim Laden gemeldet
+#     und übersprungen.
+#   - Änderungen werden mit "/eco admin reload" geladen.
+# ==========================================================
+
+# Rollen: <rollen-knoten> -> permissions (oder direkt eine Liste).
+roles:

@@ -1,5 +1,7 @@
 package de.Minefalo.economySystem;
 
+import de.Minefalo.economySystem.api.EconomyApi;
+import de.Minefalo.economySystem.api.EconomyApiImpl;
 import de.Minefalo.economySystem.command.CommandRegistry;
 import de.Minefalo.economySystem.command.module.AdminModule;
 import de.Minefalo.economySystem.command.module.BalanceModule;
@@ -10,6 +12,7 @@ import de.Minefalo.economySystem.command.module.InfoModule;
 import de.Minefalo.economySystem.command.module.PayModule;
 import de.Minefalo.economySystem.config.CommandsConfig;
 import de.Minefalo.economySystem.config.Messages;
+import de.Minefalo.economySystem.config.RolesConfig;
 import de.Minefalo.economySystem.config.Settings;
 import de.Minefalo.economySystem.config.StorageType;
 import de.Minefalo.economySystem.credit.CreditService;
@@ -18,11 +21,14 @@ import de.Minefalo.economySystem.economy.InterestScheduler;
 import de.Minefalo.economySystem.gui.GuiManager;
 import de.Minefalo.economySystem.help.HelpBook;
 import de.Minefalo.economySystem.listener.PlayerConnectionListener;
+import de.Minefalo.economySystem.permission.PermissionService;
 import de.Minefalo.economySystem.placeholder.PlaceholderHook;
 import de.Minefalo.economySystem.storage.EconomyStorage;
 import de.Minefalo.economySystem.storage.StorageException;
 import de.Minefalo.economySystem.storage.StorageFactory;
+import de.Minefalo.economySystem.storage.StorageMigration;
 import de.Minefalo.economySystem.vault.VaultHook;
+import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.List;
@@ -32,6 +38,8 @@ public final class EconomySystem extends JavaPlugin {
     private Settings settings;
     private Messages messages;
     private CommandsConfig commandsConfig;
+    private RolesConfig rolesConfig;
+    private PermissionService permissions;
     private HelpBook helpBook;
     private GuiManager guiManager;
     private EconomyStorage storage;
@@ -43,6 +51,7 @@ public final class EconomySystem extends JavaPlugin {
     private VaultState vaultState = VaultState.MISSING;
     private Settings.VaultPriority vaultPriority;
     private CommandRegistry commandRegistry;
+    private EconomyApi economyApi;
 
     @Override
     public void onEnable() {
@@ -54,8 +63,19 @@ public final class EconomySystem extends JavaPlugin {
             return;
         }
 
+        // Daten früherer Versionen liegen noch im Plugin-Ordner; ab jetzt
+        // gehört alles unter data/.
+        try {
+            StorageMigration.migrate(this, settings);
+        } catch (RuntimeException exception) {
+            getLogger().warning("Lokale Daten konnten nicht nach data/ verschoben werden: "
+                    + exception.getMessage());
+        }
+
         messages = new Messages(this);
         commandsConfig = new CommandsConfig(this);
+        rolesConfig = new RolesConfig(this);
+        permissions = new PermissionService(rolesConfig);
         helpBook = new HelpBook(this);
         guiManager = new GuiManager(this);
 
@@ -109,6 +129,11 @@ public final class EconomySystem extends JavaPlugin {
 
         setupPlaceholders();
         setupVault();
+
+        // Öffentliche Entwickler-API für andere Plugins (z. B. SimplePlots).
+        economyApi = new EconomyApiImpl(economy);
+        getServer().getServicesManager().register(EconomyApi.class, economyApi, this,
+                ServicePriority.Normal);
 
         getLogger().info("EconomySystem aktiviert (Speicher: " + storage.name()
                 + ", Währung: " + settings.currency().name() + ").");
@@ -208,6 +233,11 @@ public final class EconomySystem extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        // Die öffentliche API zuerst abmelden, damit keine Buchung mehr auf
+        // den bereits geschlossenen Speicher trifft.
+        getServer().getServicesManager().unregisterAll(this);
+        economyApi = null;
+
         if (vaultHook != null) {
             try {
                 vaultHook.unregister();
@@ -253,6 +283,7 @@ public final class EconomySystem extends JavaPlugin {
         StorageType previousType = settings.storageType();
         settings.reload();
         messages.reload();
+        rolesConfig.reload();
         helpBook.reload();
         if (guiManager != null) {
             guiManager.reload();
@@ -286,6 +317,14 @@ public final class EconomySystem extends JavaPlugin {
 
     public Messages messages() {
         return messages;
+    }
+
+    /**
+     * Zentrale Rechte-Prüfung: Bukkit-Permission oder Rolle aus der
+     * {@code roles.yml}.
+     */
+    public PermissionService permissions() {
+        return permissions;
     }
 
     public EconomyService economy() {

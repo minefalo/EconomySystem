@@ -1,9 +1,12 @@
 # ==========================================================
 #  EconomySystem - Admin-Hilfe
 # ==========================================================
-# Diese Datei wird von /economysystem-admin help gelesen.
-# Jede Seite hat einen Titel und beliebig viele Zeilen.
-# Die Navigation unter der Seite ist im Chat klickbar.
+# Diese Datei wird von /eco admin help [<seite>] und
+# /economysystem-admin help gelesen. /eco help verwendet dagegen die
+# Listen help und help-admin aus messages.yml.
+#
+# Jede Seite hat einen Titel und beliebig viele Zeilen. Die
+# Navigation unter der Seite ist im Chat klickbar.
 #
 # Platzhalter:
 #   %title%  Titel der aktuellen Seite
@@ -12,10 +15,9 @@
 #
 # Formatierung: MiniMessage-Markup, z. B. <red>, <bold>, <gray>,
 # <#RRGGBB> für Hex-Farben und <reset> zum Zurücksetzen.
-# Wörtliche spitze Klammern werden mit \ geschrieben: \<Betrag>.
+# Wörtliche spitze Klammern werden mit \< geschrieben: \<Betrag>.
+# In einfachen Anführungszeichen bleiben Backslashes unverändert.
 # ==========================================================
-
-config-version: 2
 
 title: "<dark_gray><strikethrough>          <reset> <gold><bold>EconomySystem <gray>- Admin <reset><dark_gray><strikethrough>          "
 page-title: "<yellow><bold>%title% <dark_gray>(<gray>Seite %page%/%pages%<dark_gray>)"
@@ -30,81 +32,168 @@ navigation:
 pages:
   - title: "Übersicht"
     lines:
-      - "<gray>Verwalte Guthaben und Zinsen des Servers."
+      - "<gray>Verwaltet Guthaben, Zinsen, Kredite und den Betrieb."
       - ""
-      - "<yellow>/economysystem-admin help [Seite]"
-      - "<dark_gray>  » <gray>Zeigt diese Hilfe (mehrere Seiten)."
-      - "<yellow>/economysystem-admin info"
-      - "<dark_gray>  » <gray>Zeigt Speicher, Währung, Zinsen und Zyklus."
-      - "<yellow>/economysystem-admin reload"
-      - "<dark_gray>  » <gray>Lädt alle Konfigurationen neu."
-      - '<yellow>/economysystem-admin money \<Spieler> add|remove|set \<Betrag>'
-      - "<dark_gray>  » <gray>Ändert das Guthaben eines Spielers."
-      - '<yellow>/economysystem-admin money \<Spieler> reset'
-      - "<dark_gray>  » <gray>Setzt das Guthaben auf das Startguthaben zurück."
-      - '<yellow>/economysystem-admin zinsen \<spar|kredit> set \<Faktor>'
-      - "<dark_gray>  » <gray>Setzt den Faktor a der Zinsformel."
-      - '<yellow>/economysystem-admin tests zins-zyklus add \<Anzahl>'
-      - "<dark_gray>  » <gray>Führt Zinszyklen sofort aus (nur mit tests.enabled)."
+      - "<yellow>/eco help [Seite]"
+      - "<dark_gray>  » <gray>Spieler-Hilfe aus messages.yml (Seite 1)."
+      - "<yellow>/eco admin help [Seite]"
+      - "<dark_gray>  » <gray>Diese mehrseitige Admin-Hilfe."
+      - "<yellow>/eco info"
+      - "<dark_gray>  » <gray>Speicher, Währung, Zinsen und Vault-Status."
+      - "<yellow>/eco admin reload"
+      - "<dark_gray>  » <gray>Lädt Konfiguration, Nachrichten, GUI und Hilfe neu."
+      - ""
+      - "<gray>Alle Pfade sind auch über die alten Schreibweisen"
+      - "<gray>von <yellow>/economysystem-admin <gray>erreichbar."
+      - "<gray>Details: <yellow>README.md <gray>und <yellow>Commands.md<gray>."
 
-  - title: "Menü"
+  - title: "Guthaben und Überweisung"
     lines:
-      - "<yellow>/economysystem-gui [Menü]"
-      - "<dark_gray>  » <gray>Öffnet das klickbare Wirtschafts-Menü."
-      - "<dark_gray>  » <gray>Aliase: <yellow>/eco-gui <gray>und <yellow>/egui<gray>."
+      - "<yellow>/eco balance"
+      - "<dark_gray>  » <gray>Eigenes Guthaben."
+      - '<yellow>/eco balance \<Spieler>'
+      - "<dark_gray>  » <gray>Fremdes Guthaben (Recht: balance.other)."
+      - "<yellow>/eco balance top [Seite]"
+      - "<dark_gray>  » <gray>Bestenliste; eigenes Recht balance.top."
+      - '<yellow>/eco pay \<Spieler> \<Betrag>'
+      - "<dark_gray>  » <gray>Überweisung. LOCAL: Ziel muss hier online sein."
+      - "<dark_gray>  » <gray>ANY: Offline-Ziel über MySQL, Recht pay.remote."
+      - "<dark_gray>  » <gray>PROXY ist nicht implementiert (no-route)."
       - ""
-      - "<gray>Jedes Item wird nur angezeigt, wenn du die passende"
-      - "<gray>Permission besitzt. Beim Klick wird der Befehl"
-      - "<gray>so ausgeführt, als hättest du ihn selbst eingegeben."
-      - "<gray>Befehle mit Argumenten öffnen passende Eingaben:"
-      - "<dark_gray>  » <gray>Ganze Zahlen: Regler aus Glasscheiben."
-      - "<dark_gray>  » <gray>Texte: Nametag im Amboss benennen."
-      - "<dark_gray>  » <gray>Spieler: Kopfauswahl mit Suche, Filter und Sortierung."
-      - "<gray>Der Chat wird dafür nicht mehr benötigt."
-      - ""
-      - "<gray>Admins erreichen das Admin-Menü über den <yellow>Stern"
-      - "<gray>in der unteren Reihe (Permission <yellow>economysystem.admin<gray>)."
-      - "<gray>Alle Items und Befehle stehen in der <yellow>gui.yml<gray>."
+      - "<gray>Kurzformen: <yellow>/money <gray>und <yellow>/pay<gray>."
+      - "<gray>Lokale Buchungen nennen keine tx-id; nur ANY tut das."
+      - "<gray>--reason wird geparst, aber nicht gespeichert."
 
-  - title: "Geldverwaltung"
+  - title: "Kredite"
     lines:
-      - '<yellow>/economysystem-admin money \<Spieler> add \<Betrag>'
+      - "<yellow>/eco credit"
+      - "<dark_gray>  » <gray>Übersicht (ohne Unterbefehl)."
+      - '<yellow>/eco credit take \<Betrag> \<Tage>'
+      - "<dark_gray>  » <gray>Nimmt einen Kredit auf; Auszahlung sofort."
+      - "<yellow>/eco credit repay [Betrag]"
+      - "<dark_gray>  » <gray>Zahlt den ältesten Kredit zuerst zurück."
+      - "<yellow>/eco credit info"
+      - "<dark_gray>  » <gray>Guthaben, Rahmen und laufende Kredite."
+      - "<yellow>/eco credit list"
+      - "<dark_gray>  » <gray>Alle laufenden Kredite."
+      - ""
+      - "<gray>Rahmen: <yellow>limit-multiplier × (Guthaben − offene Kredite)<gray>."
+      - "<gray>Zins: <yellow>y = Tage × slope + interest.factors.kredit<gray>."
+      - "<gray>Fällig: Zwangsabbuchung bis <yellow>min-balance<gray>;"
+      - "<gray>danach Zinserlass und Tilgung aus allen Einnahmen."
+      - "<gray>Kurzform: <yellow>/kredit<gray>."
+
+  - title: "Zinsen und Formeln"
+    lines:
+      - "<gray>Sparzins: <yellow>y = a · √x"
+      - "<dark_gray>  » <gray>x = Kontostand, a = interest.factors.spar."
+      - "<dark_gray>  » <gray>Gilt für x > 0; am Maximalguthaben kein Zins."
+      - "<gray>Kreditzins: <yellow>y = x · m + a"
+      - "<dark_gray>  » <gray>x = Tage, m = credits.slope, a = Kreditfaktor."
+      - ""
+      - "<gray>Der Zyklus läuft für alle gespeicherten Konten, auch"
+      - "<gray>für offline Spieler. Zeitplan: <yellow>start-time<gray> und"
+      - "<yellow>interval-minutes <gray>in <yellow>time-zone<gray>."
+      - "<gray>Bei MySQL schützt eine Lease vor doppelten Läufen."
+      - "<gray>Bei YAML läuft der Zyklus lokal; READ_ONLY stoppt ihn nicht."
+      - ""
+      - "<yellow>/eco admin interest show"
+      - "<dark_gray>  » <gray>Zeigt beide Faktoren."
+      - '<yellow>/eco admin interest set \<savings|credit> \<Faktor>'
+      - "<dark_gray>  » <gray>Ändert den Faktor; > 0."
+
+  - title: "Admin: Guthaben"
+    lines:
+      - '<yellow>/eco admin balance add \<Spieler> \<Betrag>'
       - "<dark_gray>  » <gray>Schreibt dem Spieler Geld gut."
-      - '<yellow>/economysystem-admin money \<Spieler> remove \<Betrag>'
+      - '<yellow>/eco admin balance remove \<Spieler> \<Betrag>'
       - "<dark_gray>  » <gray>Zieht dem Spieler Geld ab."
-      - '<yellow>/economysystem-admin money \<Spieler> set \<Betrag>'
-      - "<dark_gray>  » <gray>Setzt das Guthaben exakt auf den Betrag."
-      - '<yellow>/economysystem-admin money \<Spieler> reset'
-      - "<dark_gray>  » <gray>Setzt das Guthaben auf das konfigurierte Startguthaben."
+      - '<yellow>/eco admin balance set \<Spieler> \<Betrag> --confirm'
+      - "<dark_gray>  » <gray>Setzt das Guthaben exakt."
+      - '<yellow>/eco admin balance reset \<Spieler> --confirm'
+      - "<dark_gray>  » <gray>Setzt auf das Startguthaben zurück."
       - ""
-      - "<gray>Beträge werden mit <yellow>.<gray> oder <yellow>,<gray> als Dezimaltrennzeichen akzeptiert."
-      - "<gray>Das maximale Guthaben aus der <yellow>settings.yml <gray>wird immer beachtet."
+      - "<gray>Altformen mit Konto vor Aktion:"
+      - '<yellow>/economysystem-admin money \<Spieler> add|remove|set \<Betrag>'
+      - '<yellow>/economysystem-admin money \<Spieler> reset --confirm'
+      - ""
+      - "<red>set und reset benötigen --confirm im selben Aufruf."
+      - "<gray>Maximalguthaben und Untergrenze werden beachtet."
 
-  - title: "Zinsen"
+  - title: "Admin: Info, Reload, Rechte"
     lines:
-      - "<gray>Formel: <yellow> y = a · √x"
-      - "<dark_gray>  » <gray>x = Kontostand, a = Zinsfaktor, y = Zinsbetrag"
-      - "<dark_gray>  » <gray>gültig für x ≥ 0 und a > 0"
+      - "<yellow>/eco admin info"
+      - "<dark_gray>  » <gray>Speicher, Währung, Zinsen, Zyklus, Vault."
+      - "<yellow>/eco admin reload"
+      - "<dark_gray>  » <gray>Lädt alle Konfigurationen neu."
+      - "<yellow>/eco admin help [Seite]"
+      - "<dark_gray>  » <gray>Diese Hilfe."
       - ""
-      - '<yellow>/economysystem-admin zinsen spar set \<Faktor>'
-      - "<dark_gray>  » <gray>Setzt den Sparzins (Standard: 1.3)."
-      - "<dark_gray>  » <gray>Wird am Ende des nächsten Zinszyklus gutgeschrieben."
-      - '<yellow>/economysystem-admin zinsen kredit set \<Faktor>'
-      - "<dark_gray>  » <gray>Setzt a in der Kreditformel y = x · m + a."
+      - "<gray>Rechte (modern / alt):"
+      - "<dark_gray>  » <gray>Admin: <yellow>economysystem.command.admin <gray>/ <yellow>economysystem.admin"
+      - "<dark_gray>  » <gray>Reload: <yellow>economysystem.command.admin.reload <gray>/ <yellow>economysystem.reload"
+      - "<dark_gray>  » <gray>Info: <yellow>economysystem.command.info"
+      - "<dark_gray>  » <gray>Tests: <yellow>economysystem.command.admin.test <gray>/ <yellow>economysystem.tests"
       - ""
-      - "<gray>Der Zinszyklus läuft für <yellow>alle gespeicherten Konten<gray>, auch offline."
-      - "<gray>Zeitplan und Intervall stehen in der <yellow>settings.yml<gray>."
+      - "<gray>Wichtig: <yellow>economysystem.admin <gray>allein schaltet"
+      - "<gray>die Testbefehle nicht frei. Dafür ist zusätzlich"
+      - "<yellow>economysystem.tests <gray>oder <yellow>economysystem.command.admin.test"
+      - "<gray>nötig. <yellow>economysystem.reload <gray>allein reicht für Reload."
 
-  - title: "Tests"
+  - title: "GUI"
     lines:
-      - "<red>Achtung: <gray>Test-Befehle verändern echte Kontostände."
-      - "<gray>Sie sind nur aktiv, wenn in der <yellow>settings.yml"
-      - "<yellow> tests.enabled: true <gray>gesetzt und neu geladen wurde."
+      - "<yellow>/eco gui [Menü]"
+      - "<dark_gray>  » <gray>Öffnet das klickbare Wirtschafts-Menü."
+      - "<dark_gray>  » <gray>Kurzformen: <yellow>/economysystem-gui<gray>, <yellow>/eco-gui<gray>, <yellow>/egui<gray>."
       - ""
-      - '<yellow>/economysystem-admin tests zins-zyklus add \<Anzahl>'
-      - "<dark_gray>  » <gray>Führt den Zinszyklus sofort <yellow>\\<Anzahl> <gray>-mal aus."
-      - "<dark_gray>  » <gray>Jeder Lauf baut auf dem Guthaben des vorherigen auf,"
-      - "<dark_gray>  » <gray>simuliert also vergangene Zyklen (1 - 1000)."
+      - "<gray>Das Menü hat eine eigene Permission. Fehlt sie, reicht"
+      - "<gray>die Permission für <yellow>/eco gui<gray>."
+      - "<gray>Items mit <yellow>permission <gray>sind nur für Berechtigte sichtbar."
+      - "<gray>Items OHNE <yellow>permission <gray>sind für alle sichtbar;"
+      - "<gray>der Befehl kann trotzdem an Rechten scheitern."
       - ""
-      - "<gray>Es wird immer der aktuelle <yellow>Sparzins-Faktor <gray>verwendet."
-      - "<gray>Der automatische Zinszyklus muss dafür aktiviert sein."
+      - "<gray>Eingaben: Amboss (number, text),"
+      - "<gray>Kopfauswahl (player, mit Bestätigung). <yellow>set<gray>/<yellow>reset <gray>öffnen"
+      - "<gray>einen Bestätigungsdialog. Klicks laufen mit den"
+      - "<gray>Rechten des Spielers, nie als Admin."
+      - "<gray>Details und alle Felder: <yellow>gui.yml <gray>und README."
+
+  - title: "Netzwerk, Speicher, READ_ONLY"
+    lines:
+      - "<gray>Speicher: <yellow>SQLITE <gray>(Standard), <yellow>YAML <gray>oder <yellow>MYSQL<gray>."
+      - '<gray>SQLite: Datei <yellow>data/economy.db<gray>.'
+      - '<gray>YAML: Konten unter <yellow>data/accounts/\<uuid>.yml<gray>;'
+      - "<gray>Journal <yellow>data/pending-transaction.yml<gray>."
+      - "<gray>Alle lokalen Daten liegen im Ordner <yellow>data/ <gray>des Plugins."
+      - "<gray>Manuelle Kontodatei-Änderungen brauchen einen Neustart."
+      - ""
+      - "<gray>Netzwerk: <yellow>network.economy-scope <gray>teilt KEINE"
+      - "<gray>Konten. Alle Server mit derselben Datenbank nutzen"
+      - "<gray>dieselben Guthaben; der Wert ist nur ein Scope-Schlüssel."
+      - "<gray>PROXY ist nicht implementiert. ANY braucht eine"
+      - "<gray>gemeinsame MySQL-Datenbank und die Permission"
+      - "<yellow>economysystem.pay.remote<gray>."
+      - "<gray>invalidation, cache-ttl und transfer.timeout sind derzeit"
+      - "<gray>ohne Wirkung. Audit nur für Fernbuchungen (SQLite/MySQL)."
+      - ""
+      - "<gray>READ_ONLY erlaubt nur: <yellow>balance, balance.top,"
+      - "<yellow>credit.info, credit.list, gui, info, help,"
+      - "<yellow>admin.reload, admin.interest.show<gray>."
+      - "<red>Der geplante Zinszyklus und fällige Kredite laufen weiter."
+
+  - title: "Tests und Diagnose"
+    lines:
+      - "<red>Achtung: <gray>Testbefehle verändern echte Kontostände."
+      - "<gray>Nur auf Testservern und nur mit Sicherung verwenden."
+      - "<gray>Voraussetzungen: <yellow>tests.enabled: true <gray>und"
+      - "<yellow>economysystem.tests <gray>oder <yellow>economysystem.command.admin.test<gray>."
+      - ""
+      - '<yellow>/eco admin test interest-cycle add \<Anzahl>'
+      - "<dark_gray>  » <gray>Führt den Zinszyklus sofort mehrfach aus."
+      - "<dark_gray>  » <gray>1 bis <yellow>tests.max-cycles <gray>(Standard 1000)."
+      - "<dark_gray>  » <gray>Jeder Lauf baut auf dem vorherigen Guthaben auf."
+      - ""
+      - "<gray>Diagnose: <yellow>/eco info<gray>, Konsole und"
+      - "<gray>README Abschnitt 16 (FAQ). <yellow>--dry-run<gray> und"
+      - "<yellow>--silent <gray>sind wirkungslos; es gibt keinen Testmodus"
+      - "<gray>für Admin-Buchungen. Vorher Backup anlegen."

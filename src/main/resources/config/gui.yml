@@ -1,15 +1,20 @@
 # ==========================================================
 #  EconomySystem - GUI-Menüs
 # ==========================================================
-# Jedes Item wird nur angezeigt, wenn der Spieler die unter
-# "permission" angegebene Berechtigung besitzt. Beim Klick werden
-# die Befehle unter "commands" so ausgeführt, als hätte der Spieler
-# sie selbst eingegeben (/money, /pay, /kredit, ...).
-#
 # Formatierung: MiniMessage-Markup, z. B. <red>, <bold>, <gray>,
 # <#RRGGBB> für Hex-Farben und <reset> zum Zurücksetzen.
 #
-# Kopf und Infos:
+# Sichtbarkeit:
+#   - Ein Menü kann eine eigene "permission" haben. Fehlt sie, reicht
+#     die Permission für /eco gui.
+#   - Ein Item wird nur dann gefiltert, wenn es eine "permission" hat.
+#     Items OHNE "permission" sind für alle sichtbar, die das Menü
+#     öffnen dürfen. Der Befehl dahinter kann trotzdem an Rechten
+#     scheitern; das Item ist keine Rechteumgehung.
+#   - Befehle werden mit den Rechten des Spielers ausgeführt, so als
+#     hätte er sie selbst eingegeben (/money, /pay, /kredit, ...).
+#
+# Kopf und Anzeige:
 #   head: player  zeigt den Kopf des Spielers, der das Menü öffnet.
 #   Items ohne "commands" und ohne "open" sind reine Anzeigen; sie
 #   reagieren nicht auf Klicks.
@@ -25,12 +30,16 @@
 #     %credit_status%    "aktiviert" oder "deaktiviert"
 #
 # Eingaben (inputs): Vor dem Ausführen werden Werte abgefragt.
-#   - type: number  -> Regler aus Glasscheiben (ganze Zahlen)
-#       min, max, step, default
+#   - type: number  -> Nametag im Amboss benennen; min und max begrenzen
+#       den Wert und dürfen Dezimalwerte wie 0.01 sein, harte Obergrenze
+#       1.000.000.000.000. Alle Zeichen außer Ziffern werden entfernt,
+#       ein Komma zählt als Dezimalpunkt.
 #   - type: text    -> Nametag im Amboss benennen
 #       pattern: optionaler regulärer Ausdruck; die Antwort wird vor dem
-#       Einsetzen geprüft (ohne Angabe: ein einzelner Wert ohne Leerzeichen)
-#   - type: player  -> Kopfauswahl mit Suche, Filter und Sortierung
+#       Einsetzen geprüft. Ohne Pattern: ein einzelner Wert ohne
+#       Leerzeichen und ohne "--", maximal 64 Zeichen.
+#   - type: player  -> Kopfauswahl mit Suche, Filter und Sortierung;
+#       ein Klick öffnet eine Bestätigung, die abgebrochen werden kann
 #       filter: all | online
 #       sort:   name-asc | name-desc | balance-desc | balance-asc
 #
@@ -42,20 +51,30 @@
 #
 # Bestätigungspflichtige Befehle (z. B. "eco admin balance set ...")
 # öffnen vor dem Ausführen einen eigenen Bestätigungsdialog; der Klick auf
-# das Item und die Eingaben davor gelten nicht als Bestätigung.
+# das Item und die Eingaben davor gelten nicht als Bestätigung. Der
+# Dialog lässt sich abbrechen.
 #
 # open:    öffnet ein anderes Menü statt Befehle auszuführen.
 # slot:    0 - (rows * 9 - 1)
+# fill:    füllt leere Slots; Items überschreiben das Füllitem.
+#
+# Hinweis zu den Befehlsstrings: Die vorhandenen Items nutzen teils
+# die alten Schreibweisen (/money, /kredit, /economysystem-admin ...).
+# Diese sind weiterhin gültig. Beim Ändern eines Strings ändert sich
+# das Verhalten des Items; die kanonischen Pfade stehen in README.md
+# und Commands.md.
 # ==========================================================
 
-# Ab config-version 4 zeigt das Hauptmenü den Spielerkopf mit den
-# Guthaben-Infos und einen allgemeinen Kredit-Button. Die alten
-# Einzel-Items (balance, kredit-add, kredit-info, kredit-pay,
-# kredit-pay-part) werden bei der Aktualisierung entfernt.
-config-version: 4
+# Das Hauptmenü zeigt den Spielerkopf mit den Guthaben-Infos und
+# einen allgemeinen Kredit-Button. Die alten Einzel-Items
+# (balance, kredit-add, kredit-info, kredit-pay, kredit-pay-part)
+# werden bei der Aktualisierung entfernt.
 
+# ------------------------------------------------------------------
+# Globale GUI-Einstellungen.
+# ------------------------------------------------------------------
 settings:
-  # Menü-System aktivieren (/economysystem-gui)
+  # Menü-System aktivieren (/eco gui, /economysystem-gui)
   enabled: true
 
   # Menü, das ohne Argument geöffnet wird
@@ -68,6 +87,11 @@ settings:
   # 0 = kein Filter. Verhindert Doppelklicks, ohne andere Items zu blockieren.
   click-cooldown-ms: 200
 
+# ------------------------------------------------------------------
+# Menüs. Jedes Menü benötigt title, rows und items. Eine eigene
+# permission ist optional; fehlt sie, reicht die Permission für
+# /eco gui. Die Menü-IDs werden von /eco gui <menü> und open verwendet.
+# ------------------------------------------------------------------
 menus:
   main:
     title: "<dark_gray><bold>Wirtschaft"
@@ -116,8 +140,6 @@ menus:
             prompt: "<dark_gray>Betrag"
             min: 1
             max: 1000000
-            step: 10
-            default: 100
         commands:
           - "pay {input1} {input2}"
 
@@ -182,14 +204,10 @@ menus:
             prompt: "<dark_gray>Kreditbetrag"
             min: 10
             max: 1000000
-            step: 100
-            default: 100
           - type: number
             prompt: "<dark_gray>Laufzeit in Tagen"
             min: 1
             max: 365
-            step: 1
-            default: 30
         commands:
           - "kredit add {input1} {input2}"
 
@@ -223,10 +241,8 @@ menus:
         inputs:
           - type: number
             prompt: "<dark_gray>Betrag"
-            min: 1
+            min: 0.01
             max: 1000000
-            step: 10
-            default: 10
         commands:
           - "kredit bezahlen {input1}"
 
@@ -238,6 +254,8 @@ menus:
           - "<gray>Öffnet das Hauptmenü."
         open: "main"
 
+  # Admin-Menü. Die Menü-Permission ist economysystem.admin; die
+  # einzelnen Items haben zusätzlich eigene Permissions.
   admin:
     title: "<dark_gray><bold>Wirtschaft <reset><red><bold>Admin"
     rows: 6
@@ -276,6 +294,9 @@ menus:
         commands:
           - "economysystem-admin reload"
 
+      # Test-Item: benötigt tests.enabled: true und die Permission
+      # economysystem.tests (oder economysystem.command.admin.test).
+      # Es verändert echte Kontostände.
       tests:
         slot: 16
         material: REDSTONE_TORCH
@@ -289,8 +310,6 @@ menus:
             prompt: "<dark_gray>Anzahl der Zyklen"
             min: 1
             max: 1000
-            step: 1
-            default: 1
         commands:
           - "economysystem-admin tests zins-zyklus add {input1}"
 
@@ -308,8 +327,6 @@ menus:
             prompt: "<dark_gray>Betrag"
             min: 1
             max: 1000000
-            step: 10
-            default: 100
         commands:
           - "economysystem-admin money {input1} add {input2}"
 
@@ -327,11 +344,11 @@ menus:
             prompt: "<dark_gray>Betrag"
             min: 1
             max: 1000000
-            step: 10
-            default: 100
         commands:
           - "economysystem-admin money {input1} remove {input2}"
 
+      # set/reset öffnen den Bestätigungsdialog; der Klick auf das
+      # Item und die Zahleneingabe davor bestätigen die Buchung nicht.
       money-set:
         slot: 21
         material: DIAMOND
@@ -346,8 +363,6 @@ menus:
             prompt: "<dark_gray>Betrag"
             min: 0
             max: 1000000
-            step: 10
-            default: 100
         commands:
           - "eco admin balance set {input1} {input2}"
 
@@ -364,6 +379,8 @@ menus:
         commands:
           - "eco admin balance reset {input1}"
 
+      # Text-Eingabe mit Pattern. Der Faktor muss > 0 sein; die
+      # Prüfung erfolgt zusätzlich im Befehl.
       spar-set:
         slot: 29
         material: WHEAT

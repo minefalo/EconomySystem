@@ -20,6 +20,9 @@ import java.util.Locale;
  *   <li>{@code %aktuelle_sparzinsen%} (optional {@code _<player>})</li>
  *   <li>{@code %economysystem_...%} als vollständige Variante</li>
  * </ul>
+ *
+ * <p>Alle Geldwerte werden ausschließlich als Zahl im konfigurierten
+ * Zahlenformat ausgegeben, ohne Währungssymbol oder Anzeigeformat.</p>
  */
 public final class EconomyPlaceholderExpansion extends PlaceholderExpansion {
 
@@ -136,7 +139,8 @@ public final class EconomyPlaceholderExpansion extends PlaceholderExpansion {
     }
 
     private String format(BigDecimal amount) {
-        return amount == null ? "" : plugin.settings().currency().format(amount);
+        // Placeholder liefern nur den BigDecimal-Zahlwert, nie $ oder €.
+        return amount == null ? "" : plugin.settings().currency().formatAmount(amount);
     }
 
     private static String playerName(OfflinePlayer player) {

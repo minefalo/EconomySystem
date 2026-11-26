@@ -14,12 +14,17 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -43,20 +48,36 @@ public final class YamlStorage implements EconomyStorage {
 
     private static final String FILE_EXTENSION = ".yml";
     private static final String JOURNAL_FILE = "pending-transaction.yml";
+    private static final String TRANSACTION_FILE = "api-transactions.yml";
+    private static final String AUDIT_FILE = "audit.yml";
+    private static final int AUDIT_LIMIT = 1000;
 
     private final JavaPlugin plugin;
     private final File folder;
     private final File loansFile;
     private final File journalFile;
+    private final File transactionFile;
+    private final File auditFile;
     private final Map<String, UUID> nameIndex = new ConcurrentHashMap<>();
     private final Map<UUID, AccountData> accountIndex = new ConcurrentHashMap<>();
     private final Map<UUID, LoanData> loans = new ConcurrentHashMap<>();
+    /**
+     * Dauerhaft gebuchte Transaktions-IDs der Entwickler-API. Das Register
+     * wird zusammen mit dem Kontostand im Journal geschrieben, damit eine
+     * Wiederholung nach einem Timeout nichts doppelt bucht.
+     */
+    private final Set<UUID> processedTransactions =
+            Collections.synchronizedSet(new TransactionLedger());
+    private final List<AuditEntry> auditEntries = new ArrayList<>();
+    private final Set<UUID> auditIds = new HashSet<>();
 
     public YamlStorage(JavaPlugin plugin, Settings settings) {
         this.plugin = plugin;
-        this.folder = new File(plugin.getDataFolder(), settings.yamlFolder());
-        this.loansFile = new File(plugin.getDataFolder(), "loans.yml");
-        this.journalFile = new File(plugin.getDataFolder(), JOURNAL_FILE);
+        this.folder = StoragePaths.resolve(plugin, settings.yamlFolder());
+        this.loansFile = StoragePaths.resolve(plugin, "loans.yml");
+        this.journalFile = StoragePaths.resolve(plugin, JOURNAL_FILE);
+        this.transactionFile = StoragePaths.resolve(plugin, TRANSACTION_FILE);
+        this.auditFile = StoragePaths.resolve(plugin, AUDIT_FILE);
     }
 
     @Override
@@ -74,6 +95,8 @@ public final class YamlStorage implements EconomyStorage {
         // Kredite aus dem Journal enthalten.
         rebuildIndexes();
         loadLoansFile();
+        loadTransactionLedger();
+        loadAuditFile();
         recoverJournal();
     }
 
@@ -231,11 +254,7 @@ public final class YamlStorage implements EconomyStorage {
 
         List<Map<String, Object>> accountEntries = new ArrayList<>();
         for (AccountData account : accounts) {
-            Map<String, Object> entry = new LinkedHashMap<>();
-            entry.put("uuid", account.uniqueId().toString());
-            entry.put("name", account.name());
-            entry.put("balance", account.balance().toPlainString());
-            accountEntries.add(entry);
+            accountEntries.add(accountEntry(account));
         }
         journal.set("accounts", accountEntries);
 
@@ -260,13 +279,52 @@ public final class YamlStorage implements EconomyStorage {
         deleteJournal();
     }
 
+    /**
+     * Idempotente Einzelbuchung der Entwickler-API: Kontostand und
+     * Transaktions-ID landen gemeinsam im Journal. Erst danach wird die
+     * Konto-Datei ersetzt und das Register fortgeschrieben.
+     */
+    @Override
+    public boolean saveIdempotent(AccountData account, UUID transactionId) {
+        if (processedTransactions.contains(transactionId)) {
+            return false;
+        }
+        if (journalFile.exists()) {
+            // Eine frühere Transaktion wurde noch nicht vollständig
+            // angewendet; erst nachziehen, damit nichts überschrieben wird.
+            recoverJournal();
+        }
+
+        YamlConfiguration journal = new YamlConfiguration();
+        journal.set("accounts", List.of(accountEntry(account)));
+        journal.set("transactions", List.of(transactionId.toString()));
+
+        writeAtomically(journalFile, journal);
+        applyJournal(journal);
+        deleteJournal();
+        return true;
+    }
+
+    @Override
+    public boolean hasTransaction(UUID transactionId) {
+        return processedTransactions.contains(transactionId);
+    }
+
+    private static Map<String, Object> accountEntry(AccountData account) {
+        Map<String, Object> entry = new LinkedHashMap<>();
+        entry.put("uuid", account.uniqueId().toString());
+        entry.put("name", account.name());
+        entry.put("balance", account.balance().toPlainString());
+        return entry;
+    }
+
     private YamlConfiguration loadJournal() {
         return YamlConfiguration.loadConfiguration(journalFile);
     }
 
     private void applyJournal(YamlConfiguration journal) {
         if (!journal.contains("accounts") && !journal.contains("loans")
-                && !journal.contains("deleted-loans")) {
+                && !journal.contains("deleted-loans") && !journal.contains("transactions")) {
             throw new StorageException("Journal enthält keine Transaktion: " + JOURNAL_FILE);
         }
 
@@ -285,6 +343,18 @@ public final class YamlStorage implements EconomyStorage {
             } catch (IllegalArgumentException exception) {
                 throw new StorageException("Ungültige Kredit-ID im Journal: " + raw, exception);
             }
+        }
+
+        List<String> transactions = journal.getStringList("transactions");
+        for (String raw : transactions) {
+            try {
+                processedTransactions.add(UUID.fromString(raw));
+            } catch (IllegalArgumentException exception) {
+                throw new StorageException("Ungültige Transaktions-ID im Journal: " + raw, exception);
+            }
+        }
+        if (!transactions.isEmpty()) {
+            writeTransactionLedger();
         }
 
         if (journal.contains("loans") || journal.contains("deleted-loans")) {
@@ -460,6 +530,202 @@ public final class YamlStorage implements EconomyStorage {
         entry.put("due-at", loan.dueAt());
         entry.put("auto-collect", loan.autoCollect());
         return entry;
+    }
+
+    private void loadTransactionLedger() {
+        processedTransactions.clear();
+        if (!transactionFile.exists()) {
+            return;
+        }
+        YamlConfiguration config = YamlConfiguration.loadConfiguration(transactionFile);
+        for (String raw : config.getStringList("transactions")) {
+            try {
+                processedTransactions.add(UUID.fromString(raw));
+            } catch (IllegalArgumentException exception) {
+                plugin.getLogger().warning("Ungültige Transaktions-ID in " + TRANSACTION_FILE
+                        + ": " + raw);
+            }
+        }
+    }
+
+    private void writeTransactionLedger() {
+        YamlConfiguration config = new YamlConfiguration();
+        List<String> ids = new ArrayList<>();
+        synchronized (processedTransactions) {
+            for (UUID id : processedTransactions) {
+                ids.add(id.toString());
+            }
+        }
+        config.set("transactions", ids);
+        writeAtomically(transactionFile, config);
+    }
+
+    // ------------------------------------------------------------------
+    // Audit-Trail
+    // ------------------------------------------------------------------
+
+    @Override
+    public void recordAudit(AuditEntry entry) {
+        synchronized (auditEntries) {
+            if (!auditIds.add(entry.txId())) {
+                return;
+            }
+            auditEntries.add(entry);
+            auditEntries.sort(Comparator.comparingLong(AuditEntry::occurredAt));
+            while (auditEntries.size() > AUDIT_LIMIT) {
+                AuditEntry removed = auditEntries.remove(0);
+                auditIds.remove(removed.txId());
+            }
+            writeAuditFile();
+        }
+    }
+
+    @Override
+    public List<AuditEntry> audit(String scope, int limit) {
+        int maximum = Math.max(1, Math.min(limit, 100));
+        List<AuditEntry> result = new ArrayList<>();
+        synchronized (auditEntries) {
+            for (int index = auditEntries.size() - 1;
+                 index >= 0 && result.size() < maximum; index--) {
+                AuditEntry entry = auditEntries.get(index);
+                if (entry.scope() != null && entry.scope().equals(scope)) {
+                    result.add(entry);
+                }
+            }
+        }
+        return result;
+    }
+
+    @Override
+    public int pruneAudit(String scope, long cutoffMillis, int batchSize) {
+        int limit = Math.max(1, Math.min(batchSize, 1000));
+        int deleted = 0;
+        synchronized (auditEntries) {
+            Iterator<AuditEntry> iterator = auditEntries.iterator();
+            while (iterator.hasNext() && deleted < limit) {
+                AuditEntry entry = iterator.next();
+                if (entry.occurredAt() < cutoffMillis
+                        && entry.scope() != null && entry.scope().equals(scope)) {
+                    iterator.remove();
+                    auditIds.remove(entry.txId());
+                    deleted++;
+                }
+            }
+            if (deleted > 0) {
+                writeAuditFile();
+            }
+        }
+        return deleted;
+    }
+
+    private void loadAuditFile() {
+        synchronized (auditEntries) {
+            auditEntries.clear();
+            auditIds.clear();
+            if (!auditFile.exists()) {
+                return;
+            }
+            YamlConfiguration config = YamlConfiguration.loadConfiguration(auditFile);
+            for (Map<?, ?> entry : config.getMapList("entries")) {
+                try {
+                    AuditEntry audit = parseAudit(entry);
+                    auditEntries.add(audit);
+                    auditIds.add(audit.txId());
+                } catch (RuntimeException exception) {
+                    plugin.getLogger().warning("Audit-Eintrag in " + AUDIT_FILE
+                            + " konnte nicht gelesen werden: " + exception.getMessage());
+                }
+            }
+            auditEntries.sort(Comparator.comparingLong(AuditEntry::occurredAt));
+            while (auditEntries.size() > AUDIT_LIMIT) {
+                AuditEntry removed = auditEntries.remove(0);
+                auditIds.remove(removed.txId());
+            }
+        }
+    }
+
+    private void writeAuditFile() {
+        YamlConfiguration config = new YamlConfiguration();
+        List<Map<String, Object>> entries = new ArrayList<>();
+        synchronized (auditEntries) {
+            for (AuditEntry entry : auditEntries) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("tx-id", entry.txId().toString());
+                item.put("occurred-at", entry.occurredAt());
+                item.put("server-id", entry.serverId());
+                item.put("scope", entry.scope());
+                item.put("actor-uuid", entry.actorId() == null ? null : entry.actorId().toString());
+                item.put("actor-name", entry.actorName());
+                item.put("origin", entry.origin());
+                item.put("action", entry.action());
+                item.put("target-uuid", entry.targetId() == null ? null : entry.targetId().toString());
+                item.put("target-name", entry.targetName());
+                item.put("amount", entry.amount() == null ? null : entry.amount().toPlainString());
+                item.put("balance-after", entry.balanceAfter() == null
+                        ? null : entry.balanceAfter().toPlainString());
+                item.put("reason", entry.reason());
+                item.put("result", entry.result().name());
+                entries.add(item);
+            }
+        }
+        config.set("entries", entries);
+        writeAtomically(auditFile, config);
+    }
+
+    private static AuditEntry parseAudit(Map<?, ?> entry) {
+        return new AuditEntry(
+                UUID.fromString(String.valueOf(entry.get("tx-id"))),
+                ((Number) entry.get("occurred-at")).longValue(),
+                textOrNull(entry.get("server-id")),
+                textOrNull(entry.get("scope")),
+                uuidOrNull(entry.get("actor-uuid")),
+                textOrNull(entry.get("actor-name")),
+                textOrNull(entry.get("origin")),
+                textOrNull(entry.get("action")),
+                uuidOrNull(entry.get("target-uuid")),
+                textOrNull(entry.get("target-name")),
+                decimalOrNull(entry.get("amount")),
+                decimalOrNull(entry.get("balance-after")),
+                textOrNull(entry.get("reason")),
+                AuditEntry.Result.valueOf(String.valueOf(entry.get("result"))));
+    }
+
+    private static String textOrNull(Object raw) {
+        return raw == null ? null : String.valueOf(raw);
+    }
+
+    private static UUID uuidOrNull(Object raw) {
+        String text = textOrNull(raw);
+        return text == null || text.isBlank() ? null : UUID.fromString(text.trim());
+    }
+
+    private static BigDecimal decimalOrNull(Object raw) {
+        String text = textOrNull(raw);
+        return text == null || text.isBlank() ? null : new BigDecimal(text.trim());
+    }
+
+    /**
+     * Transaktionsregister mit fester Obergrenze. Die ältesten Einträge
+     * fallen zuerst heraus; für Wiederholungen nach Timeouts genügt ein
+     * begrenzter Zeitraum.
+     */
+    private static final class TransactionLedger extends LinkedHashSet<UUID> {
+
+        private static final long serialVersionUID = 1L;
+        private static final int LIMIT = 10_000;
+
+        @Override
+        public boolean add(UUID transactionId) {
+            boolean added = super.add(transactionId);
+            if (size() > LIMIT) {
+                Iterator<UUID> iterator = iterator();
+                while (size() > LIMIT && iterator.hasNext()) {
+                    iterator.next();
+                    iterator.remove();
+                }
+            }
+            return added;
+        }
     }
 
     private void putInIndex(String name, UUID uniqueId) {

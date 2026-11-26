@@ -30,6 +30,7 @@ public final class MySqlStorage implements EconomyStorage {
     private final String table;
     private final String loanTable;
     private final String transferTable;
+    private final String apiTable;
     private final String auditTable;
     private final String lockTable;
     private final String runTable;
@@ -60,6 +61,7 @@ public final class MySqlStorage implements EconomyStorage {
                 + "`revision` = `revision` + 1";
 
         this.transferTable = prefix + "transfers";
+        this.apiTable = prefix + "api_transactions";
         this.auditTable = prefix + "audit";
         this.lockTable = prefix + "locks";
         this.runTable = prefix + "interest_runs";
@@ -211,6 +213,12 @@ public final class MySqlStorage implements EconomyStorage {
                 + "KEY `idx_scope_time` (`scope`, `occurred_at`)"
                 + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
 
+        String apiTransactions = "CREATE TABLE IF NOT EXISTS `" + apiTable + "` ("
+                + "`tx_id` CHAR(36) NOT NULL,"
+                + "`applied_at` BIGINT NOT NULL,"
+                + "PRIMARY KEY (`tx_id`)"
+                + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+
         String locks = "CREATE TABLE IF NOT EXISTS `" + lockTable + "` ("
                 + "`scope` VARCHAR(32) NOT NULL,"
                 + "`holder` VARCHAR(32) NOT NULL,"
@@ -227,6 +235,7 @@ public final class MySqlStorage implements EconomyStorage {
 
         try (Statement statement = current.createStatement()) {
             statement.execute(transfers);
+            statement.execute(apiTransactions);
             statement.execute(audit);
             statement.execute(locks);
             statement.execute(runs);
@@ -654,6 +663,75 @@ public final class MySqlStorage implements EconomyStorage {
                         // Verbindung wird beim nächsten Zugriff ohnehin geprüft.
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * Idempotente Einzelbuchung: Der Schlüssel wird zusammen mit dem neuen
+     * Kontostand in einer Transaktion geschrieben. Ein bereits bekannter
+     * Schlüssel löst den eindeutigen Primärschlüssel aus und rollt zurück.
+     */
+    @Override
+    public boolean saveIdempotent(AccountData account, UUID transactionId) {
+        String claim = "INSERT INTO `" + apiTable + "` (`tx_id`, `applied_at`) VALUES (?, ?)";
+        synchronized (lock) {
+            Connection current = null;
+            boolean autoCommit = true;
+            try {
+                current = connection();
+                autoCommit = current.getAutoCommit();
+                current.setAutoCommit(false);
+
+                long now = System.currentTimeMillis();
+                try (PreparedStatement statement = current.prepareStatement(claim)) {
+                    statement.setString(1, transactionId.toString());
+                    statement.setLong(2, now);
+                    statement.executeUpdate();
+                } catch (SQLIntegrityConstraintViolationException duplicate) {
+                    current.rollback();
+                    return false;
+                }
+
+                try (PreparedStatement statement = current.prepareStatement(upsertSql)) {
+                    bindUpsert(statement, account);
+                    statement.executeUpdate();
+                }
+
+                current.commit();
+                return true;
+            } catch (SQLException exception) {
+                if (current != null) {
+                    try {
+                        current.rollback();
+                    } catch (SQLException rollbackException) {
+                        exception.addSuppressed(rollbackException);
+                    }
+                }
+                throw fail("buchen", exception);
+            } finally {
+                if (current != null) {
+                    try {
+                        current.setAutoCommit(autoCommit);
+                    } catch (SQLException ignored) {
+                        // Verbindung wird beim nächsten Zugriff ohnehin geprüft.
+                    }
+                }
+            }
+        }
+    }
+
+    @Override
+    public boolean hasTransaction(UUID transactionId) {
+        String sql = "SELECT 1 FROM `" + apiTable + "` WHERE `tx_id` = ?";
+        synchronized (lock) {
+            try (PreparedStatement statement = connection().prepareStatement(sql)) {
+                statement.setString(1, transactionId.toString());
+                try (ResultSet result = statement.executeQuery()) {
+                    return result.next();
+                }
+            } catch (SQLException exception) {
+                throw fail("prüfen", exception);
             }
         }
     }

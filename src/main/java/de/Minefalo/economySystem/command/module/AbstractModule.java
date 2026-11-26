@@ -7,14 +7,16 @@ import de.Minefalo.economySystem.config.Messages;
 import de.Minefalo.economySystem.currency.Currency;
 import de.Minefalo.economySystem.economy.Account;
 import de.Minefalo.economySystem.economy.EconomyService;
-import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Player;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Gemeinsame Basis aller Fachmodule: Zugriff auf Dienst, Währung und
@@ -104,9 +106,29 @@ public abstract class AbstractModule implements CommandModule {
         return amount;
     }
 
-    protected static List<String> onlinePlayerNames() {
+    /**
+     * Vorschläge für einen Spielernamen: bei leerer oder einbuchstabiger
+     * Eingabe sofort alle Online-Spieler, ab zwei Zeichen alle bekannten
+     * Konten - auch von offline Spielern.
+     */
+    protected List<String> playerNameSuggestions(String prefix) {
+        String value = prefix == null ? "" : prefix.trim();
+        Set<String> names = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        names.addAll(onlinePlayerNames());
+        if (value.length() >= 2) {
+            names.addAll(economy.knownPlayerNames());
+        }
+        return filter(List.copyOf(names), value);
+    }
+
+    /**
+     * Namen aller Spieler, die gerade auf diesem Server online sind.
+     */
+    private List<String> onlinePlayerNames() {
         List<String> names = new ArrayList<>();
-        Bukkit.getOnlinePlayers().forEach(player -> names.add(player.getName()));
+        for (Player player : plugin.getServer().getOnlinePlayers()) {
+            names.add(player.getName());
+        }
         return names;
     }
 

@@ -1,5 +1,5 @@
 name: EconomySystem
-description: BigDecimal-Guthaben mit YAML- und MySQL-Speicher
+description: BigDecimal-Guthaben mit SQLite-/YAML-/MySQL-Speicher, Zinsen, Krediten, GUI, PlaceholderAPI und Vault
 prefix: EconomySystem
 version: '${version}'
 
@@ -11,72 +11,81 @@ softdepend: [ PlaceholderAPI, Vault ]
 authors: [ Minefalo ]
 
 # Wird von Paper automatisch heruntergeladen und geladen.
-# Dadurch funktioniert der MySQL-Speicher ohne zusätzliche Installation.
+# Dadurch funktionieren SQLite- und MySQL-Speicher ohne zusätzliche
+# Installation.
 libraries:
+  - org.xerial:sqlite-jdbc:3.54.1.0
   - com.mysql:mysql-connector-j:9.1.0
 
 # Aliase werden in der commands.yml registriert.
 # Kurzbefehle; der Pfad steht in der commands.yml (Commands.md, 4.2).
 # Die usage-Texte nennen die kanonische Syntax aus Commands.md, Abschnitt 5.
+# Unterbefehle stehen NICHT hier, sondern im dynamischen Befehlsbaum.
 commands:
   money:
-    description: Zeigt dein Guthaben oder das eines Spielers an.
-    usage: /eco balance [<konto>]
+    description: Zeigt das eigene oder ein fremdes Guthaben und die Bestenliste an.
+    usage: /eco balance [<konto>|top [<seite>]]
   pay:
-    description: Überweist Geld an einen anderen Spieler.
+    description: Überweist Geld an einen Spieler. LOCAL verlangt ein Online-Ziel; ANY bucht über MySQL.
     usage: /eco pay <konto> <betrag> [--reason <text>]
   kredit:
-    description: Nimmt einen Kredit auf, zahlt ihn zurück oder zeigt ihn an.
+    description: Nimmt einen Kredit auf, zahlt ihn zurück oder zeigt Kredite und Rahmen an.
     usage: /eco credit <take <betrag> <tage>|repay [<betrag>]|info|list>
   economysystem:
-    description: Hauptbefehl für die Hilfe.
+    description: Hauptbefehl für die Spieler- und Admin-Hilfe.
     usage: /eco help [<seite>]
   economysystem-admin:
-    description: Admin-Befehl für Geldverwaltung, Zinsen, Informationen, Reload und Tests.
+    description: Admin-Befehl für Guthaben, Kredite, Zinsen, Info, Reload und Tests.
     usage: /eco admin <help|info|reload|balance|credit|interest|test>
   economysystem-gui:
     description: Öffnet das klickbare Wirtschafts-Menü.
     usage: /eco gui [<menü>]
 
 permissions:
+  # ------------------------------------------------------------------
+  # Alte Knoten. Sie bleiben gültig und werden mit den modernen
+  # Knoten kombiniert geprüft. Für neue Vergaben sind die
+  # economysystem.command.*-Knoten empfohlen.
+  # ------------------------------------------------------------------
   economysystem.balance:
-    description: Erlaubt das Anzeigen des eigenen Guthabens.
+    description: Erlaubt das Anzeigen des eigenen Guthabens (alt; modern ist economysystem.command.balance).
     default: true
   economysystem.balance.others:
-    description: Erlaubt das Anzeigen fremder Guthaben.
+    description: Erlaubt das Anzeigen fremder Guthaben (alt; modern ist economysystem.command.balance.other, Singular).
     default: op
   economysystem.balance.top:
-    description: Erlaubt die Bestenliste über /money top.
+    description: Erlaubt die Bestenliste über /money top (alt; modern ist economysystem.command.balance.top).
     default: true
   economysystem.pay:
-    description: Erlaubt das Überweisen von Geld an andere Spieler.
+    description: Erlaubt das Überweisen von Geld an andere Spieler (alt; modern ist economysystem.command.pay).
     default: true
   economysystem.kredit:
-    description: Erlaubt die Nutzung des Kreditsystems (/kredit).
+    description: Erlaubt die Nutzung des Kreditsystems /kredit (alt; modern ist economysystem.command.credit).
     default: true
   economysystem.gui:
-    description: Erlaubt das Öffnen des Wirtschafts-Menüs (/economysystem-gui).
+    description: Erlaubt das Öffnen des Wirtschafts-Menüs (alt; modern ist economysystem.command.gui).
     default: true
   economysystem.admin:
-    description: Erlaubt die Admin-Befehle (Geldverwaltung, Zinsen, Info).
+    description: Sammelrecht für die Admin-Pfade (alt; modern ist economysystem.command.admin). Allein schaltet es die Testbefehle NICHT frei.
     default: op
   economysystem.reload:
-    description: Erlaubt zusätzlich zu economysystem.admin das Neuladen über /economysystem-admin reload.
+    description: Erlaubt das Neuladen über /eco admin reload, auch ohne volles Admin-Sammelrecht (alt; modern ist economysystem.command.admin.reload).
     default: op
   economysystem.tests:
-    description: Erlaubt zusätzlich zu economysystem.admin die Test-Befehle (nur wenn tests.enabled in der settings.yml aktiv ist).
+    description: Erlaubt die Testbefehle, sofern tests.enabled true ist. Allein ausreichend; economysystem.admin allein genügt nicht (alt; modern ist economysystem.command.admin.test).
     default: op
 
-  # Neue Knoten nach Commands.md, Abschnitt 7.1. Die bisherigen Knoten
-  # bleiben gültig; der Code akzeptiert beide Formen (Abschnitt 7.4).
+  # ------------------------------------------------------------------
+  # Moderne Knoten nach Commands.md, Abschnitt 7.1.
+  # ------------------------------------------------------------------
   economysystem.command.balance:
-    description: Erlaubt das Anzeigen des eigenen Guthabens (/eco balance).
+    description: Erlaubt das Anzeigen des eigenen Guthabens (/eco balance). Schaltet NICHT balance.top oder balance.other frei.
     default: true
   economysystem.command.balance.other:
-    description: Erlaubt das Anzeigen fremder Guthaben.
+    description: Erlaubt das Anzeigen fremder Guthaben (/eco balance <konto>). Der Plural economysystem.command.balance.others wird nicht ausgewertet.
     default: op
   economysystem.command.balance.top:
-    description: Erlaubt die Bestenliste über /eco balance top.
+    description: Erlaubt die Bestenliste (/eco balance top). Eigenes Recht; nicht in economysystem.command.balance enthalten.
     default: true
   economysystem.command.pay:
     description: Erlaubt das Überweisen von Geld an andere Spieler (/eco pay).
@@ -88,13 +97,13 @@ permissions:
     description: Erlaubt das Öffnen des Wirtschafts-Menüs (/eco gui).
     default: true
   economysystem.command.info:
-    description: Erlaubt die Systeminformationen (/eco info).
+    description: Erlaubt die Systeminformationen (/eco info). Der alte Admin-Knoten reicht dafür nicht.
     default: op
   economysystem.command.admin:
-    description: Sammelrecht für alle admin.*-Pfade (/eco admin).
+    description: Sammelrecht für alle admin.*-Pfade (/eco admin). Allein schaltet es die Testbefehle NICHT frei.
     default: op
   economysystem.command.admin.balance:
-    description: Erlaubt die Guthabenverwaltung (/eco admin balance add|remove|set|reset).
+    description: Erlaubt die Guthabenverwaltung (/eco admin balance add|remove|set|reset). set/reset benötigen --confirm.
     default: op
   economysystem.command.admin.credit:
     description: Erlaubt die Kreditverwaltung (/eco admin credit list).
@@ -103,13 +112,13 @@ permissions:
     description: Erlaubt Zinsanzeige und Zinssatzänderung (/eco admin interest show|set).
     default: op
   economysystem.command.admin.reload:
-    description: Erlaubt das Neuladen der Konfiguration (/eco admin reload).
+    description: Erlaubt das Neuladen der Konfiguration (/eco admin reload), auch ohne volles Admin-Sammelrecht.
     default: op
   economysystem.command.admin.test:
-    description: Erlaubt die Test-Befehle unter /eco admin test (nur mit tests.enabled).
+    description: Erlaubt die Testbefehle unter /eco admin test, sofern tests.enabled true ist.
     default: op
   economysystem.pay.remote:
-    description: Erlaubt Überweisungen an Ziele, die nicht auf diesem Server online sind (network.transfer.mode).
+    description: Erlaubt Überweisungen an Ziele, die nicht auf diesem Server online sind (network.transfer.mode ANY; PROXY ist nicht implementiert).
     default: op
   economysystem.bypass.cooldown:
     description: Ignoriert den Cooldown von Befehlen (Commands.md, Abschnitt 7.3).

@@ -1,6 +1,6 @@
 # EconomySystem — Befehlsstruktur
 
-**Status:** Spezifikation (Zielstruktur)
+**Status:** Spezifikation mit dokumentiertem Umsetzungsstand
 **Gültig für:** alle Server eines Netzwerks, die dieses Plugin einsetzen
 **Verbindlich für:** jeden neuen Befehl, jede neue Untergruppe und jede Änderung an bestehenden Pfaden
 
@@ -39,6 +39,30 @@ die Struktur**; jene Dateien bleiben die Quelle für Texte und Hilfe-Seiten.
 
 Alles, was mit ⏳ markiert ist, ist **kein** Versprechen über den aktuellen
 Funktionsumfang. Ein Befehl, der hier ⏳ trägt, antwortet heute nicht.
+
+### Umsetzungsstand (maßgeblich für den aktuellen Code)
+
+`README.md` beschreibt das tatsächliche Verhalten. Diese Datei beschreibt
+zusätzlich die Zielstruktur. Wo beide abweichen, gilt für den Betrieb die
+README; für die Weiterentwicklung bleibt diese Datei die Strukturvorgabe.
+
+| Bereich | Heute umgesetzt | Heute **nicht** umgesetzt |
+| --- | --- | --- |
+| Wurzel/Router | `/eco`, `/economysystem`, Kurzbefehle, Aliase, dynamischer Baum | — |
+| Guthaben | `balance`, `balance.top`, lokale Anzeige | `#uuid:`, `#konto:`, `@s` |
+| Überweisung | `pay` mit `LOCAL`; `ANY` über SQLite/MySQL mit `economysystem.pay.remote` | `PROXY`, `pay.status`, Rückbuchung nach Timeout |
+| Kredite | `take`, `repay`, `info`, `list`; Fälligkeit/Tilgung | `credit.forgive` |
+| GUI | Menüs, Items, Eingaben, Bestätigung | — |
+| Info/Hilfe | `info`, `/eco help` aus `messages.yml`, `/eco admin help` aus `help.yml` | Hilfe aus Modulen/Registry |
+| Admin | `balance add/remove/set/reset`, `credit list`, `interest show/set`, `reload`, `test` | `interest run`, `reload network`, `network status/scopes`, `audit` |
+| Flags | `--confirm` bei `set`/`reset` | `--dry-run`, `--silent`, `--player`, `--action`, `--server`, `--scope`; `--reason` wird nicht gespeichert |
+| Netzwerk | SQLite-/MySQL-Lease, `interest_runs`, `ANY`-Transfer, Audit für Fernbuchungen | `PROXY`, Cache-Invalidierung, Cache-TTL, Transfer-Timeout, Scope-Partitionierung |
+| Audit | nur `remoteTransferAsync`, nur SQLite/MySQL | Audit für lokale/Admin-/Zins-/Kreditbuchungen; YAML-Audit |
+| Idempotenz | gleicher Transfer-Datensatz über `idempotency_key` | Wiederholungssicherheit über neue Befehle/tx-id |
+
+**Konsequenz für Doku und Tests:** Aussagen in den folgenden Abschnitten, die
+nicht in dieser Tabelle als umgesetzt stehen, sind Zielbild und dürfen nicht
+als aktuelles Verhalten getestet oder zugesagt werden.
 
 ---
 
@@ -82,8 +106,8 @@ werden — mit Begründung.
 | **Alias** | Ein zusätzlicher Name für einen Wurzel- oder Kurzbefehl, aus `commands.yml`. | `/geld` → `money` |
 | **Modul** | Die Java-Einheit, die genau einen Pfad (und optional dessen Unterpfade) implementiert. | `BalanceModule` |
 | **Origin** | Herkunft eines Aufrufs: `PLAYER`, `CONSOLE`, `GUI`, `API`, `SCHEDULER`. | `GUI` |
-| **Scope** | Wirtschaftsraum, in dem Konten gelten (`shared`, `group`, `server`). | `global`, `survival`, `survival-1` |
-| **tx-id** | Transaktionskennung, die jede schreibende Aktion erzeugt und ausgibt. | `7f3a91e0` |
+| **Scope** | Gruppierungsschlüssel für Lease, Transfer und Audit (`shared`, `group`, `server`). Er teilt heute **keine** Konten. | `global`, `survival`, `survival-1` |
+| **tx-id** | Transaktionskennung. Heute nur bei `ANY`-Fernbuchungen; lokale Buchungen nennen keine tx-id. | `7f3a91e0` |
 
 ---
 
@@ -101,7 +125,7 @@ Diese Regeln sind der Kern der Struktur. Sie gelten für jeden neuen Befehl.
 | **R6** | **Ein Pfad, ein Recht.** Jeder Pfad hat genau einen Permission-Knoten; feinere Rechte sind Unterknoten. | Nachvollziehbare Rechtevergabe in LuckPerms & Co. |
 | **R7** | **Ein Ergebnis, ein Message-Key.** Kein Befehl baut Nachrichten aus Textbausteinen im Code. | Übersetzbarkeit, konsistente Formulierungen. |
 | **R8** | **Vorladen ist ein Hook, keine Typprüfung.** Module deklarieren selbst, welche Daten sie vorab brauchen. | Die `instanceof`-Kette in `AbstractEconomyCommand` verhindert heute genau das. |
-| **R9** | **Jede Geldänderung ist atomar, auditierbar und idempotent.** Ein Aufruf erzeugt genau einen Audit-Eintrag und ist bei Wiederholung mit gleicher tx-id wirkungslos. | Absturz, Doppelklick, Retry im Netzwerk dürfen kein Geld erzeugen. |
+| **R9** | **Geldänderungen sind atomar; Fernbuchungen sind idempotent.** Ein `ANY`-Transfer erzeugt einen Audit-Eintrag und ist bei gleichem `idempotency_key` wirkungslos. Lokale/Admin-/Zins-/Kreditbuchungen haben heute keinen Audit-Eintrag und keine vom Aufrufer steuerbare tx-id. | Absturz, Doppelklick und Retry dürfen kein Geld erzeugen; der aktuelle Stand erfüllt das nur für `ANY`-Transfers. |
 | **R10** | **Kein Befehl schreibt ohne Dienst.** Kein Modul öffnet eine Datenbankverbindung, keine Datei und keinen Scheduler. | Sonst umgeht jeder neue Befehl die Konsistenzregeln. |
 
 ---
@@ -120,7 +144,7 @@ die Voraussetzung für R4.
 
 | Befehl | Rolle | Pfad | `plugin.yml` | Aliase |
 | --- | --- | --- | --- | --- |
-| `/eco` | **kanonischer Wurzelbefehl** ✅ | — | nein (dynamisch registriert, wie die Aliase) | `es` ⏳ |
+| `/eco` | **kanonischer Wurzelbefehl** ✅ | — | nein (dynamisch registriert) | — |
 | `/economysystem` | bestehender Wurzelbefehl ✅ | — | ja | `es` |
 | `/money` | Kurzbefehl ✅ | `balance` | ja | `geld`, `balance`, `coins` |
 | `/pay` | Kurzbefehl ✅ | `pay` | ja | `zahlen`, `ueberweisen` |
@@ -172,7 +196,7 @@ Damit gilt: **eine neue Funktion unterhalb von `/eco` erfordert keine
 ├── balance [<konto>]                          # ✅ /money
 │   └── top [<seite>]                          # ✅ /money top
 ├── pay <konto> <betrag> [--reason <text>]     # ✅ /pay
-│   └── status <tx-id>                         # ⏳ Netzwerk
+│   └── status <tx-id>                         # ⏳ Netzwerk, nicht implementiert
 ├── credit                                     # ✅ /kredit
 │   ├── take <betrag> <tage>
 │   ├── repay [<betrag>]
@@ -180,7 +204,7 @@ Damit gilt: **eine neue Funktion unterhalb von `/eco` erfordert keine
 │   └── list
 ├── gui [<menü>]                               # ✅ /economysystem-gui
 ├── info                                       # ✅ /economysystem-admin info
-├── help [<seite>]                             # ✅ /economysystem help
+├── help [<seite>]                             # ✅ /economysystem help (messages.yml)
 └── admin
     ├── balance
     │   ├── add <konto> <betrag>
@@ -206,32 +230,32 @@ Damit gilt: **eine neue Funktion unterhalb von `/eco` erfordert keine
 
 | Pfad | Syntax | Permission | Message-Präfix | GUI | Netzwerk |
 | --- | --- | --- | --- | --- | --- |
-| `balance` | `/eco balance [<konto>]` | `economysystem.command.balance` (eigenes), `.balance.other` (fremdes) | `command.balance` | ✅ Item „Guthaben“ | liest Konto im aktiven Scope |
-| `balance.top` | `/eco balance top [<seite>]` | `economysystem.command.balance.top` | `command.balance.top` | — | Rangliste des aktiven Scopes |
-| `pay` | `/eco pay <konto> <betrag> [--reason]` | `economysystem.command.pay` | `command.pay` | ✅ Item „Überweisen“ | je nach `network.transfer.mode` lokal oder serverübergreifend |
+| `balance` | `/eco balance [<konto>]` | `economysystem.command.balance` (eigenes), `.balance.other` (fremdes) | `command.balance` | ✅ Item „Guthaben“ | liest Konto; `economy-scope` teilt keine Konten |
+| `balance.top` | `/eco balance top [<seite>]` | `economysystem.command.balance.top` | `command.balance.top` | — | Rangliste; eigenes Recht, nicht in `balance` enthalten |
+| `pay` | `/eco pay <konto> <betrag> [--reason]` | `economysystem.command.pay` | `command.pay` | ✅ Item „Überweisen“ | `LOCAL` (auch offline)/`ANY`; `PROXY` ⏳; `--reason` wird nicht gespeichert |
 | `pay.status` ⏳ | `/eco pay status <tx-id>` | `economysystem.command.pay` | `command.pay.status` | — | Status einer eingereihten Überweisung |
-| `credit.take` | `/eco credit take <betrag> <tage>` | `economysystem.command.credit` | `command.credit.take` | ✅ | Kreditrahmen gilt im aktiven Scope |
+| `credit.take` | `/eco credit take <betrag> <tage>` | `economysystem.command.credit` | `command.credit.take` | ✅ | Kreditrahmen gilt für das Konto; `economy-scope` teilt keine Konten |
 | `credit.repay` | `/eco credit repay [<betrag>]` | `economysystem.command.credit` | `command.credit.repay` | ✅ | — |
 | `credit.info` | `/eco credit info` | `economysystem.command.credit` | `command.credit.info` | ✅ | — |
-| `credit.list` | `/eco credit list` | `economysystem.command.credit` | `command.credit.list` | — | nennt Kredite mit tx-id |
+| `credit.list` | `/eco credit list` | `economysystem.command.credit` | `command.credit.list` | — | nennt Kredite; keine tx-id |
 | `gui` | `/eco gui [<menü>]` | `economysystem.command.gui` | `command.gui` | — | Menüinhalte hängen an den Rechten des Spielers |
-| `info` | `/eco info` | `economysystem.command.info` | `command.info` | — | zeigt Scope, Server, Modus |
-| `help` | `/eco help [<seite>]` | keine (immer erlaubt) | `command.help` | — | — |
+| `info` | `/eco info` | `economysystem.command.info` | `command.info` | — | zeigt Speicher, Währung, Zinsen, Vault; **nicht** Scope/Server/Modus |
+| `help` | `/eco help [<seite>]` | keine (immer erlaubt) | `help`/`help-admin` (messages.yml) | — | Seite 2 nur mit Admin-Recht; `help.yml` nur über `/eco admin help` |
 
 ### 5.3 Adminpfade
 
 | Pfad | Syntax | Permission | Message-Präfix | Netzwerk |
 | --- | --- | --- | --- | --- |
-| `admin.balance.add` | `/eco admin balance add <konto> <betrag> [--reason]` | `economysystem.command.admin.balance` | `command.admin.balance.add` | schreibt in den Scope des Zielkontos |
+| `admin.balance.add` | `/eco admin balance add <konto> <betrag> [--reason]` | `economysystem.command.admin.balance` | `command.admin.balance.add` | schreibt direkt ins Zielkonto; `--reason` wird nicht gespeichert |
 | `admin.balance.remove` | `/eco admin balance remove <konto> <betrag> [--reason]` | `economysystem.command.admin.balance` | `command.admin.balance.remove` | dito |
 | `admin.balance.set` | `/eco admin balance set <konto> <betrag> --confirm` | `economysystem.command.admin.balance` | `command.admin.balance.set` | dito |
 | `admin.balance.reset` | `/eco admin balance reset <konto> --confirm` | `economysystem.command.admin.balance` | `command.admin.balance.reset` | dito |
-| `admin.credit.list` | `/eco admin credit list <konto>` | `economysystem.command.admin.credit` | `command.admin.credit.list` | liest Kredite des Scopes |
+| `admin.credit.list` | `/eco admin credit list <konto>` | `economysystem.command.admin.credit` | `command.admin.credit.list` | liest Kredite des Kontos; kein Scope-Filter |
 | `admin.credit.forgive` ⏳ | `/eco admin credit forgive <kredit-id> --confirm [--reason]` | `economysystem.command.admin.credit` | `command.admin.credit.forgive` | wirkt scope-übergreifend nur mit `admin.network` |
-| `admin.interest.show` | `/eco admin interest show` | `economysystem.command.admin.interest` | `command.admin.interest.show` | Faktoren gelten pro Scope |
-| `admin.interest.set` | `/eco admin interest set savings\|credit <faktor>` | `economysystem.command.admin.interest` | `command.admin.interest.set` | schreibt in `settings.yml` des Zielservers bzw. in den Scope ⏳ |
-| `admin.interest.run` ⏳ | `/eco admin interest run [--dry-run] --confirm` | `economysystem.command.admin.interest` | `command.admin.interest.run` | nur der Lease-Inhaber je Scope |
-| `admin.reload` | `/eco admin reload [local\|network]` | `economysystem.command.admin.reload` | `command.admin.reload` | `network` nur mit `admin.network` |
+| `admin.interest.show` | `/eco admin interest show` | `economysystem.command.admin.interest` | `command.admin.interest.show` | Faktoren kommen aus der lokalen `settings.yml` |
+| `admin.interest.set` | `/eco admin interest set savings\|credit <faktor>` | `economysystem.command.admin.interest` | `command.admin.interest.set` | schreibt nur in die lokale `settings.yml`; kein Scope-Schreibzugriff |
+| `admin.interest.run` ⏳ | `/eco admin interest run [--dry-run] --confirm` | `economysystem.command.admin.interest` | `command.admin.interest.run` | nicht implementiert |
+| `admin.reload` | `/eco admin reload [local]` | `economysystem.command.admin.reload` | `command.admin.reload` | nur lokal; `network` ist nicht implementiert |
 | `admin.network.status` ⏳ | `/eco admin network status` | `economysystem.command.admin.network` | `command.admin.network.status` | Server, Lease, Outbox-Rückstand |
 | `admin.network.scopes` ⏳ | `/eco admin network scopes` | `economysystem.command.admin.network` | `command.admin.network.scopes` | Scope → Konten → Server |
 | `admin.audit` ⏳ | `/eco admin audit [<seite>] [--player <name>] [--action <aktion>]` | `economysystem.command.admin.audit` | `command.admin.audit` | liest Audit-Einträge aller Server |
@@ -244,7 +268,8 @@ Damit gilt: **eine neue Funktion unterhalb von `/eco` erfordert keine
 - Ohne Argument zeigt das **eigene** Konto. Die Konsole erhält die Hilfe,
   nicht ein Fehler.
 - `top` und `help` sind reservierte Wörter und haben Vorrang vor
-  Spielernamen. Ein Spieler namens `top` wird über `#uuid:<uuid>` erreicht.
+  Spielernamen. `#uuid:<uuid>` ist **nicht** implementiert; ein Spieler
+  namens `top` ist über diesen Pfad derzeit nicht eindeutig erreichbar.
 - Fremdes Guthaben nur mit `.balance.other`; die Tab-Vervollständigung
   schlägt fremde Konten nur mit diesem Recht vor.
 
@@ -253,17 +278,19 @@ Damit gilt: **eine neue Funktion unterhalb von `/eco` erfordert keine
 - Betrag muss positiv sein, das Guthaben decken und darf am Zielkonto
   `currency.max-balance` nicht überschreiten (heutiges Verhalten bleibt).
 - Selbstzahlung ist ein Fehler (`command.pay.self`), keine stille No-Op.
-- Im Modus `LOCAL` gilt: Ziel muss **online auf diesem Server** sein. Das
-  ist heute so und bleibt so, bis `network.transfer.mode` umgestellt wird.
-- Die Quittung nennt immer die tx-id, damit `/eco pay status` und
-  `/eco admin audit` daran anschließen.
+- Im Modus `LOCAL` wird auch an **offline** Ziele gebucht, sofern das
+  Konto bereits existiert; es wird dann gegen das gespeicherte Konto
+  gearbeitet. Ein unbekannter Name führt zu `player-not-found`.
+- Die Quittung nennt **nur bei `ANY`** eine tx-id. Lokale Buchungen
+  nennen keine; `/eco pay status` und `/eco admin audit` sind nicht
+  implementiert.
 
 **`credit`**
 
-- `take` prüft in dieser Reihenfolge: System aktiv → Laufzeit gültig →
-  Betrag ≥ Minimum → Kreditplätze frei → Rahmen ausreichend →
-  Maximalguthaben. Diese Reihenfolge ist Teil der Struktur, weil sie
-  Fehlermeldungen eindeutig macht.
+- `take` prüft in dieser Reihenfolge: System aktiv → Kreditplätze frei →
+  Laufzeit gültig → Betrag ≥ Minimum → Rahmen ausreichend →
+  Maximalguthaben. Diese Reihenfolge entspricht dem aktuellen Code und
+  macht Fehlermeldungen eindeutig.
 - `repay` tilgt ohne Betrag so viel wie möglich; `list` und `info` sind
   lesend und brauchen keinen Cooldown.
 
@@ -272,8 +299,8 @@ Damit gilt: **eine neue Funktion unterhalb von `/eco` erfordert keine
 - Jeder Adminpfad verlangt `economysystem.command.admin` **oder** den
   spezifischen Unterknoten. Wer nur `…admin.balance` hat, sieht `interest`
   weder in der Hilfe noch in der Tab-Vervollständigung.
-- `set`, `reset`, `forgive`, `interest run` und `reload network` sind
-  **bestätigungspflichtig** (Abschnitt 6.4).
+- `set` und `reset` sind **bestätigungspflichtig** (Abschnitt 6.4).
+  `forgive`, `interest run` und `reload network` sind nicht implementiert.
 
 ---
 
@@ -320,40 +347,40 @@ eigenes Pfadsegment.
 | Typ | Schreibweise | Regeln |
 | --- | --- | --- |
 | **Betrag** | `100`, `1.234,56`, `1000.5` | `.` und `,` als Dezimaltrennzeichen; keine Tausendertrennzeichen; keine negativen Eingaben; keine Exponentialschreibweise; höchstens `currency.decimals` Nachkommastellen; Obergrenze `currency.max-balance` |
-| **Konto** | `@s`, `<name>`, `#uuid:<uuid>`, `#konto:<scope>:<uuid>` ⏳ | siehe 6.5 |
+| **Konto** | `<name>` | `@s`, `#uuid:<uuid>` und `#konto:<scope>:<uuid>` sind **nicht** implementiert; siehe 6.5 |
 | **Seite** | `1`, `2`, `3` | ganze Zahl ≥ 1; zu große Seiten werden auf die letzte Seite geklemmt, nicht abgelehnt |
 | **Faktor** | `1.3`, `0,5` | positiver Dezimalwert, `> 0` |
 | **Laufzeit** | `7`, `30`, `90` | ganze Zahl zwischen `credits.min-days` und `credits.max-days` |
 | **Menü** | `main`, `credit`, `admin` | muss in `gui.yml` existieren |
-| **tx-id** | `7f3a91e0` | 8 hexadezimale Zeichen, aus der vollständigen UUID abgeleitet |
-| **Kredit-ID** | `#kredit:<uuid>` ⏳ | eindeutig; laufende Nummern aus `credit info` sind nur Anzeige |
+| **tx-id** | `7f3a91e0` | 8 hexadezimale Zeichen; heute nur in der `ANY`-Erfolgsnachricht, nicht als Eingabe |
+| **Kredit-ID** | `#kredit:<uuid>` ⏳ | nicht implementiert; laufende Nummern aus `credit info` sind nur Anzeige |
 
 ### 6.4 Flags
 
 | Flag | Wirkung | Recht | Hinweise |
 | --- | --- | --- | --- |
-| `--reason <text>` | Begründung für das Audit-Log | — (jeder Schreibende) | maximal 160 Zeichen, Steuerzeichen entfernt |
-| `--silent` | keine Bestätigung im Chat, nur Audit + Log | Admin-Pfade | ändert nichts an der Wirkung |
-| `--dry-run` | zeigt die Wirkung, schreibt nichts | wie der Pfad selbst (nur Admin-Pfade) | keine Kontostandsänderung, **kein** Audit-Eintrag, Konsolen-Log auf `INFO` |
-| `--confirm` | Bestätigung für bestätigungspflichtige Aktionen | wie der Pfad selbst | nicht zulässig bei `Origin.GUI`, siehe unten |
-| `--player <name>` | Filter für `admin.audit` ⏳ | `admin.audit` | nur lesend |
-| `--action <aktion>` | Filter für `admin.audit` ⏳ | `admin.audit` | z. B. `pay`, `admin.balance.set` |
-| `--server <id>` | Zielserver für Netzwerkaktionen ⏳ | `admin.network` | ohne `admin.network` ein Fehler, keine stille Ignoranz |
-| `--scope <id>` | Ziel-Scope ⏳ | `admin.network` | überschreibt `network.economy-scope` für diesen Aufruf |
+| `--reason <text>` | wird geparst und auf `commands.reason-max-length` gekürzt, aber **nicht gespeichert** | jeder Schreibende | derzeit ohne Wirkung auf Audit/Transaktion |
+| `--silent` | wird geparst und **ignoriert** | Admin-Pfade | keine stille Buchung |
+| `--dry-run` | wird geparst und **ignoriert** | Admin-Pfade | **keine** Simulation; es wird echt geschrieben |
+| `--confirm` | Bestätigung für `admin.balance.set` und `admin.balance.reset` | wie der Pfad selbst | im selben Aufruf erforderlich; GUI-Bestätigung ersetzt es nicht |
+| `--player <name>` | gehört zu `admin.audit` ⏳ | `admin.audit` | nicht implementiert |
+| `--action <aktion>` | gehört zu `admin.audit` ⏳ | `admin.audit` | nicht implementiert |
+| `--server <id>` | gehört zu `admin.network` ⏳ | `admin.network` | nicht implementiert |
+| `--scope <id>` | gehört zu `admin.network` ⏳ | `admin.network` | nicht implementiert |
 
 Regeln zu `--confirm`:
 
-- Bestätigungspflichtig sind `admin.balance.set`, `admin.balance.reset`,
-  `admin.credit.forgive`, `admin.interest.run`, `admin.reload network`.
-- Ohne `--confirm` antwortet der Befehl mit `command._default.confirm-required`
-  und nennt die genaue Syntax zum Wiederholen — keine Ja/Nein-Abfrage im
-  Chat, damit der Befehl skriptfähig bleibt.
-- Aufrufe mit `Origin.GUI` **dürfen** `--confirm` nicht verwenden. Die
-  `gui.yml` wird beim Laden geprüft; ein Item, dessen `commands`-Eintrag
-  `--confirm` enthält, wird mit Warnung übersprungen. Sonst würde ein Klick
-  die Bestätigung ersetzen.
-- Aufrufe mit `Origin.CONSOLE` dürfen `--confirm` verwenden; das wird im
-  Audit mit `origin = CONSOLE` festgehalten.
+- Bestätigungspflichtig sind heute nur `admin.balance.set` und
+  `admin.balance.reset`. `forgive`, `interest run` und `reload network`
+  sind nicht implementiert.
+- Ohne `--confirm` antwortet der Befehl mit
+  `command._default.error.confirm-required` und nennt die genaue Syntax
+  zum Wiederholen — keine Ja/Nein-Abfrage im Chat.
+- Die GUI-Bestätigung ist ein eigener Dialog. Ein GUI-Item mit
+  `admin balance set`/`reset` führt den Befehl erst nach dem Dialog aus;
+  der Item-Klick allein bestätigt nicht.
+- Aufrufe aus der Konsole dürfen `--confirm` verwenden; ein Audit-Eintrag
+  entsteht dabei heute nicht.
 
 ### 6.5 Kontoauflösung (UUID-first)
 
@@ -362,17 +389,17 @@ Namen sind Ein- und Ausgabe.**
 
 | Eingabe | Auflösung |
 | --- | --- |
-| `@s` | UUID des ausführenden Spielers; auf der Konsole ein Fehler |
-| `<name>` | zuerst online auf diesem Server, dann gespeichertes Konto per Name |
-| `#uuid:<uuid>` | direkt, ohne Namenssuche — der einzige eindeutige Weg bei Namenswechseln |
-| `#konto:<scope>:<uuid>` ⏳ | direkter Zugriff auf ein Konto in einem anderen Scope |
+| `<name>` | zuerst online auf diesem Server, dann Konten-Cache, dann `loadByName` im Speicher |
+| `@s` | **nicht implementiert** |
+| `#uuid:<uuid>` | **nicht implementiert** |
+| `#konto:<scope>:<uuid>` | **nicht implementiert** |
 
-- Ein Name, der auf **mehrere** Konten passt (Namenswechsel), löst auf das
-  zuletzt aktualisierte Konto auf und erzeugt eine Warnzeile im Ergebnis,
-  die auf `#uuid:` verweist. Kein stilles Raten.
+- Ein Name wird ohne UUID-Syntax aufgelöst. Gibt es mehrere Konten mit
+  demselben Namen (Namenswechsel), entscheidet der Speicher bzw. der
+  zuletzt bekannte Eintrag; eine explizite Mehrdeutigkeitswarnung gibt es
+  nicht.
 - Namen werden nie gespeichert, ohne dass das Konto die UUID kennt.
-- Anzeigen verwenden den zuletzt bekannten Namen; das Ergebnis nennt
-  zusätzlich die Konto-Kennung, wenn der Aufrufer Admin ist.
+- Anzeigen verwenden den zuletzt bekannten Namen.
 
 ### 6.6 Antwortformat
 
@@ -381,38 +408,38 @@ unterscheiden sich nur im Transport, nicht im Inhalt:
 
 ```
 <Kopfzeile>       Titel + Kontext (z. B. "Guthaben von Minefalo")
-<Zeilen>          höchstens 10 Zeilen; mehr wird geblättert
-<Fußzeile>        bei schreibenden Aktionen: "tx 7f3a91e0"
+<Zeilen>          modulabhängig; Hilfe und Top blättern
+<Fußzeile>        nur bei ANY-Fernbuchungen: "tx 7f3a91e0"
 ```
 
-- Kopf und Fuß stammen aus `messages.yml`, Zeilen aus dem Modul.
-- Schreibende Aktionen nennen die tx-id **immer**, auch mit `--silent`
-  (dann nur im Log).
-- `--silent` unterdrückt Kopf und Zeilen, nicht den Audit-Eintrag.
+- Kopf und Zeilen stammen aus `messages.yml` bzw. den Hilfe-Listen.
+- Lokale und Admin-Buchungen nennen **keine** tx-id.
+- `--silent` hat keine Wirkung und unterdrückt nichts.
 
 ### 6.7 Prüfreihenfolge
 
-Damit Fehlermeldungen eindeutig sind, prüft **jeder** Pfad in dieser
-Reihenfolge — und keine Stufe wird übersprungen:
+Der **aktuelle Router** prüft in dieser Reihenfolge:
 
-1. **Herkunft** — ist der Befehl für `CONSOLE` zugelassen? (`player-only`)
-2. **Systemzustand** — ist die Funktion aktiviert (`credits.enabled`,
-   `tests.enabled`, `network.mode`)?
-3. **Permission** — Pfadknoten, danach Admin-Wildcard.
-4. **Syntax** — Argumentanzahl und Flags; bei Fehler: `usage` **mit** der
-   vollständigen richtigen Syntax.
-5. **Werte** — Beträge, Seiten, Faktoren, Laufzeiten.
-6. **Bestätigung** — `--confirm`, falls erforderlich.
-7. **Fachregeln** — Guthaben, Rahmen, Maximalbetrag, Kreditplätze.
-8. **Ausführung** — über den Dienst, genau einmal.
+1. **Registrierung und Pfad** — existiert der Pfad? Bei Fehler:
+   `unknown-subcommand` oder `usage`.
+2. **Herkunft** — `playerOnly`-Pfade weisen die Konsole ab.
+3. **READ_ONLY** — die Positivliste aus `ReadOnlyPolicy`; alle anderen
+   Pfade werden abgewiesen.
+4. **Permission** — Pfadknoten, alter/neuer Knoten als ODER.
+5. **Syntax und Flags** — Argumentanzahl, Flag-Rechte; `usage` mit der
+   vollständigen Syntax.
+6. **Bestätigung** — `--confirm` oder eine echte GUI-Bestätigung.
+7. **Rate-Limit und Cooldown** — vor der Fachlogik; eine Ablehnung
+   verbraucht kein Kontingent.
+8. **Ausführung** — über das Modul, genau einmal.
 
-Diese Reihenfolge ist auch der Grund, warum Permission **vor** Syntax
-geprüft wird: Wer keine Rechte hat, soll die Syntax nicht erfahren.
+Die **Werte- und Fachprüfungen** (Beträge, Seiten, Faktoren, Guthaben,
+Rahmen, Maximalbetrag, Kreditplätze) liegen innerhalb des Moduls, also
+nach Stufe 8. Das ist der aktuelle Stand; die frühere achtstufige
+Zielreihenfolge mit „Systemzustand vor Permission“ ist nicht umgesetzt.
 
-Der Router setzt diese Reihenfolge in genau einer Methode um. Der Cooldown
-aus Abschnitt 11.7 liegt zwischen Bestätigung und Ausführung; die
-Werte- und Fachprüfungen (**5** und **7**) bleiben Aufgabe des Moduls, weil
-nur es Betrag, Seite und Rahmen kennt.
+Permission wird **vor** Syntax geprüft: Wer keine Rechte hat, soll die
+Syntax nicht erfahren.
 
 ---
 
@@ -432,10 +459,11 @@ economysystem.command.<pfad.mit.punkten>
 | `gui` | `economysystem.command.gui` |
 | `info` | `economysystem.command.info` |
 | `admin.balance.*` | `economysystem.command.admin.balance` |
+| `admin.credit.*` | `economysystem.command.admin.credit` |
 | `admin.interest.*` | `economysystem.command.admin.interest` |
 | `admin.reload` | `economysystem.command.admin.reload` |
-| `admin.network.*` | `economysystem.command.admin.network` |
-| `admin.audit` | `economysystem.command.admin.audit` |
+| `admin.network.*` ⏳ | `economysystem.command.admin.network` |
+| `admin.audit` ⏳ | `economysystem.command.admin.audit` |
 | `admin.test.*` | `economysystem.command.admin.test` |
 
 **Regel:** Die Permission gehört zur **Gruppe** (`admin.balance`), nicht zur
@@ -445,7 +473,9 @@ LuckPerms-Gruppen klein, ohne Schutz zu verlieren.
 
 ### 7.2 Vererbung und Wildcards
 
-- `economysystem.command.admin` schaltet **alle** `admin.*`-Pfade frei.
+- `economysystem.command.admin` schaltet die Admin-Pfade auf Router-Ebene
+  frei. **Ausnahme:** `admin.test` verlangt zusätzlich
+  `economysystem.tests` oder `economysystem.command.admin.test`.
 - Ein Unterknoten schaltet **nicht** seinen Elternknoten frei:
   `…admin.balance` erlaubt keine Zinsen und kein Audit.
 - Wildcards (`economysystem.command.*`) sind Bukkit-Standard und werden
@@ -461,9 +491,9 @@ Diese Rechte hängen an keiner Aktion, sondern an einer Fähigkeit:
 | --- | --- |
 | `economysystem.bypass.cooldown` | ignorieren von `network.limits.*.cooldown` |
 | `economysystem.bypass.rate-limit` | ignorieren der Mengenbegrenzung |
-| `economysystem.pay.remote` ⏳ | Überweisung an Spieler auf anderen Servern |
-| `economysystem.pay.offline` ⏳ | Überweisung an offline befindliche Konten |
-| `economysystem.notify.admin` | Hinweise bei fehlgeschlagenen Netzwerkaktionen erhalten |
+| `economysystem.pay.remote` | Überweisung an Ziele, die nicht auf diesem Server online sind (`ANY`; `PROXY` ist nicht implementiert) |
+| `economysystem.pay.offline` ⏳ | nicht implementiert; `ANY` nutzt `pay.remote` |
+| `economysystem.notify.admin` ⏳ | nicht implementiert |
 
 ### 7.4 Mapping: heute → Ziel
 
@@ -475,7 +505,7 @@ Diese Rechte hängen an keiner Aktion, sondern an einer Fähigkeit:
 | `economysystem.pay` | `economysystem.command.pay` | beide akzeptiert |
 | `economysystem.kredit` | `economysystem.command.credit` | beide akzeptiert |
 | `economysystem.gui` | `economysystem.command.gui` | beide akzeptiert |
-| `economysystem.admin` | `economysystem.command.admin` | **bleibt dauerhaft** als Sammelrecht |
+| `economysystem.admin` | `economysystem.command.admin` | **bleibt dauerhaft** als Sammelrecht; Testbefehle brauchen zusätzlich `economysystem.tests` |
 | `economysystem.reload` | `economysystem.command.admin.reload` | beide akzeptiert |
 | `economysystem.tests` | `economysystem.command.admin.test` | beide akzeptiert |
 
@@ -488,7 +518,7 @@ die neuen Knoten ergänzt.
 
 ## 8. `commands.yml` v2
 
-Heute enthält `commands.yml` (config-version 1) nur `commands.<name>.aliases`.
+Heute enthält `commands.yml` (Version 1, siehe `config-version.yml`) nur `commands.<name>.aliases`.
 Deutsche Unterbefehlswörter stehen dagegen fest im Java-Code
 (`case "geld"`, `case "zinsen"`, `case "aufnehmen"`). Das ist der zweite
 Erweiterungsblocker neben der `instanceof`-Kette.
@@ -501,8 +531,6 @@ Erweiterungsblocker neben der `instanceof`-Kette.
 # ==========================================================
 # Kanonische Pfade stehen in Commands.md. Diese Datei ändert nur
 # Schreibweisen, niemals die Struktur.
-
-config-version: 2
 
 # Wörter, die innerhalb eines Pfades als Synonym gelten.
 # Sie werden VOR dem Routing ersetzt und sind keine eigenen Pfade.
@@ -603,7 +631,7 @@ suggestions:
 2. Die bisher hartcodierten deutschen Wörter werden als Standardwerte
    eingetragen — bestehende Aufrufe wie `/kredit aufnehmen` funktionieren
    damit unverändert weiter.
-3. `config-version` wird auf `2` gesetzt.
+3. Die Version von `commands.yml` wird in `config-version.yml` auf `2` gesetzt.
 4. Ein Wechsel zurück ist möglich: fehlt `subcommand-words`, greifen die
    eingebauten Standardwerte.
 
@@ -646,13 +674,13 @@ Jeder Pfad verwendet dieselben Codes für dieselben Situationen:
 | `error.insufficient-funds` | Guthaben zu klein | „Du hast nicht genug Geld. Guthaben: %balance%“ |
 | `error.rate-limited` | zu viele Aufrufe | „Bitte warte einen Moment.“ |
 | `error.confirm-required` | `--confirm` fehlt | „Wiederhole den Befehl mit --confirm: %syntax%“ |
-| `error.read-only` ⏳ | Server im Modus `READ_ONLY` | „Dieser Server ist schreibgeschützt.“ |
+| `error.read-only` | Server im Modus `READ_ONLY` | „Dieser Server ist schreibgeschützt.“ |
 | `error.not-enabled` | Funktion aus | „Diese Funktion ist derzeit deaktiviert.“ |
 | `error.out-of-scope` ⏳ | Konto in fremdem Scope | „Das Konto gehört zum Bereich %scope%.“ |
 | `error.storage` | Speicherfehler | „Es gab einen Fehler beim Datenzugriff.“ |
 | `error.internal` | unerwarteter Fehler | „Der Vorgang ist fehlgeschlagen. Siehe Konsole.“ |
 | `usage` | Syntax falsch | vollständige, korrekte Syntax |
-| `dry-run` | Vorschau | „Vorschau: %description%“ |
+| `dry-run` ⏳ | Vorschau; **nicht implementiert** | keine Ausgabe, weil `--dry-run` ignoriert wird |
 
 `usage` nennt **immer** die vollständige kanonische Syntax des aufgerufenen
 Pfades — der Grund, warum `plugin.yml` die `usage`-Texte nicht mehr doppelt
@@ -660,26 +688,30 @@ pflegen muss.
 
 ### 9.3 Hilfe
 
-- **Eine Quelle:** Jedes Modul liefert einen Hilfe-Beitrag (Titel, Zeilen,
-  erforderliche Permission, Pfad).
-- `/eco help [<seite>]` baut die Seiten aus den sichtbaren Modulen und
-  ihren Permissions. Wer `admin.interest` nicht hat, sieht den Abschnitt
-  nicht.
-- `help.yml` bleibt bestehen und **überschreibt** Texte: gleiche Struktur
-  (Titel + Zeilen), zusätzlich optional `path: "admin.interest.set"`, um
-  einen Abschnitt an einen Pfad zu binden. Nicht gebundene Abschnitte
-  bleiben statische Seiten.
-- `/eco admin help` ist ein Alias auf `/eco help 2` (Admin-Seiten).
-- Ein Modul ohne Hilfe-Beitrag ist ein Reviewfehler (Abschnitt 14).
+**Aktueller Stand:**
+
+- `/eco help [<seite>]` liest die Listen `help` und `help-admin` aus
+  `messages.yml`. Seite 1 ist immer erlaubt; Seite > 1 verlangt
+  `economysystem.admin` (oder den alten Admin-Knoten).
+- `/eco admin help [<seite>]` liest die Seiten aus `help.yml`.
+- Module liefern **keine** Hilfe-Beiträge; es gibt keine Registry-basierte
+  Hilfe und keine automatische Permission-Filterung der Abschnitte.
+- `help.yml` ist eine eigenständige, gepflegte Datei. Sie überschreibt
+  nichts aus `messages.yml`.
+- Ein neuer Befehl muss in `help.yml`, `messages.yml` und `README.md`
+  dokumentiert werden (Abschnitt 14).
 
 ### 9.4 Tab-Vervollständigung
 
 - Vervollständigt wird nur, was der Aufrufer auch ausführen darf.
+- Spielernamen erscheinen sofort: bei leerer oder einbuchstabiger Eingabe
+  alle Online-Spieler, ab zwei Zeichen alle bekannten Konten, auch von
+  offline Spielern.
 - Reihenfolge: Unterpfade alphabetisch, dann Konten (Name), dann Zahlen.
 - Keine Vorschläge für `--reason` (Freitext) und keine Vorschläge für
   Argumente, deren vorheriges Argument ungültig ist.
-- Maskierte Namen (`#uuid:`-Form) werden nicht vorgeschlagen, aber
-  akzeptiert.
+- Maskierte Namen (`#uuid:`-Form) sind nicht implementiert und werden
+  weder vorgeschlagen noch akzeptiert.
 - Vorschlagslisten stehen in `commands.yml → suggestions` (Abschnitt 8);
   `settings.yml → suggestions` bleibt als Standard für die Spielerpfade.
 - Ein Modul liefert seine Vorschläge selbst (`complete()`), der Router
@@ -805,12 +837,14 @@ return List.of(
 3. **Registrieren** — ein Eintrag in `EconomyCommandRegistry#modules()`.
 4. **Permission dokumentieren** — `plugin.yml`-Kommentarblock und Abschnitt 7
    dieser Datei; nur bei neuen Capabilities ein neuer Knoten.
-5. **Nachrichten** — `messages.yml` (`config-version` erhöhen) mit Keys nach
+5. **Nachrichten** — `messages.yml` (Version in `config-version.yml` erhöhen) mit Keys nach
    Abschnitt 9.1; Standardtexte im Code als Fallback.
-6. **Hilfe und Vorschläge** — Hilfe-Beitrag im Modul, `suggestions` in
-   `commands.yml` (optional), Kurzbefehl nur mit Begründung (Abschnitt 4.2).
-7. **Audit und Test** — `auditActions()` füllen, `--dry-run` unterstützen,
-   Test über einen Dev-Build (`tests.enabled: true`) oder Unit-Test.
+6. **Hilfe und Vorschläge** — Eintrag in `messages.yml` und ggf.
+   `help.yml`, `suggestions` in `commands.yml` (optional), Kurzbefehl nur
+   mit Begründung (Abschnitt 4.2). Eine Modul-Hilfe/Registry gibt es nicht.
+7. **Audit und Test** — Audit wird heute nur für `ANY`-Fernbuchungen und
+   nur bei SQLite/MySQL geschrieben; `--dry-run` ist nicht implementiert. Test
+   über einen Dev-Build (`tests.enabled: true`) oder Unit-Test.
 
 ### 10.5 Durchgespieltes Beispiel: `/eco bank deposit`
 
@@ -855,10 +889,12 @@ Angenommen, ein Netzwerk möchte Einzahlungen auf ein Bankkonto:
    `plugin.yml` und Abschnitt 7 ergänzt.
 5. **Nachrichten:** `command.bank.deposit.ok`, `command.bank.deposit.error.no-account`,
    `command.bank.deposit.error.insufficient-funds`.
-6. **Hilfe/Vorschläge:** Hilfe-Beitrag „Bank – Einzahlung“, Vorschläge
-   `bank.deposit.amount` in `commands.yml`.
-7. **Audit:** Aktion `bank.deposit` mit `actor`, `amount`, `balance_after`,
-   tx-id in der Antwort.
+6. **Hilfe/Vorschläge:** Eintrag „Bank – Einzahlung“ in `messages.yml`
+   und ggf. `help.yml`, Vorschläge `bank.deposit.amount` in `commands.yml`.
+   Eine Modul-Hilfe/Registry gibt es nicht.
+7. **Audit:** Aktion `bank.deposit` mit `actor`, `amount`, `balance_after`
+   ist Zielbild. Heute schreibt nur `remoteTransferAsync` Audit-Einträge;
+   eine tx-id in der Antwort gibt es nur bei `ANY`-Fernbuchungen.
 
 Kein Eintrag in `plugin.yml` für einen Befehl, keine Änderung an
 `AbstractEconomyCommand`, keine Änderung an `pay` oder `credit`.
@@ -871,9 +907,9 @@ Kein Eintrag in `plugin.yml` für einen Befehl, keine Änderung an
 
 | Punkt | Stand |
 | --- | --- |
-| 11.1 `network:`-Block, Scope-Kennung | ✅ gelesen, Scope-Kennung abgeleitet; Datenmigration `shared → group` ⏳ |
+| 11.1 `network:`-Block, Scope-Kennung | ✅ gelesen, Scope-Kennung abgeleitet; **keine** Kontenpartitionierung; Scope-Migration ⏳ |
 | 11.2 Transfer `ANY` (idempotent, eine Transaktion) | ✅; `PROXY` ohne Serverliste → `command.pay.error.no-route`; Rückbuchung nach Timeout ⏳ |
-| 11.3 `accounts.revision`, Cache-Verwerfen nach Fernbuchung | ✅; Ausbreitung per `PLUGIN_MESSAGE`/`REDIS` ⏳ |
+| 11.3 `accounts.revision` | ✅ vorhanden; Cache-Invalidierung/TTL und Ausbreitung per `PLUGIN_MESSAGE`/`REDIS` ⏳ |
 | 11.4 Lease + `economy_interest_runs` | ✅ für den geplanten Lauf; `admin interest run` ⏳ |
 | 11.5 Netzwerk-Reload | ⏳ |
 | 11.6 Tabellen und Speicher-Schnittstelle, Audit der Fernbuchung | ✅; Audit für alle schreibenden Befehle und YAML-Audit ⏳ |
@@ -905,21 +941,21 @@ network:
   invalidation: "TTL"
 ```
 
-| `economy-scope` | Konten gelten für | Scope-Kennung in der Datenbank |
+| `economy-scope` | Scope-Kennung | Wirkung heute |
 | --- | --- | --- |
-| `shared` | alle Server | `global` |
-| `group` | alle Server mit gleicher `group` | `group:<group>` |
-| `server` | nur dieser Server | `server:<id>` |
+| `shared` | `global` | alle Server mit derselben Datenbank nutzen dieselben Konten |
+| `group` | `group:<group>` | **keine** Kontenpartitionierung; nur Scope-Schlüssel |
+| `server` | `server:<id>` | **keine** Kontenpartitionierung; nur Scope-Schlüssel |
 
 Regeln:
 
-- Jeder Befehl arbeitet **immer** in genau einem Scope. Die Kennung wird
-  aus `settings.yml` abgeleitet, nie aus dem Argument eines Spielers.
-- `--scope` ist ein Admin-Flag mit `admin.network`; es ändert den Scope nur
-  für diesen einen Aufruf.
-- Die Umstellung `shared → group` ist eine Datenmigration: Konten müssen
-  mit `scope` neu geschrieben werden. Sie ist als Wartungsvorgang
-  dokumentiert und nicht über `reload` erreichbar.
+- `economy-scope` ist **keine** Kontenpartitionierung. Alle Server mit
+  derselben Datenbank lesen und schreiben dieselben `accounts`-Zeilen.
+- Der Wert fließt nur in Lease, Transfer und Audit ein.
+- `--scope` ist nicht implementiert.
+- Die Umstellung `shared → group` ist **keine** Datenmigration, weil keine
+  Scope-Spalte an den Konten existiert. Getrennte Guthaben brauchen
+  getrennte Datenbanken.
 
 ### 11.2 Serverübergreifende Überweisung
 
@@ -932,23 +968,27 @@ network:
 
 | Modus | Verhalten von `/eco pay` |
 | --- | --- |
-| `LOCAL` | Ziel muss online auf **diesem** Server sein. Heutiges Verhalten ✅ |
-| `PROXY` | Ziel darf auf einem anderen Server dieses Netzwerks online sein. |
-| `ANY` | Ziel darf auch offline sein (Konto wird per UUID beliefert). |
+| `LOCAL` | Ziel darf offline sein; gebucht wird gegen das gespeicherte Konto. Heutiges Verhalten ✅ |
+| `PROXY` | Ziel darf auf einem anderen Server dieses Netzwerks online sein. **Nicht implementiert:** `no-route`. |
+| `ANY` | Ziel darf offline sein; das Konto muss bereits existieren. |
 
-Ablauf im Netzwerkbetrieb:
+**Aktueller Ablauf bei `ANY`:**
 
-1. Befehl erzeugt eine **tx-id** und schreibt einen Eintrag in
-   `economy_transfers` mit `state = pending`.
-2. Der Betrag wird beim Absender **sofort** abgebucht (Reservierung), damit
-   zwei gleichzeitige Überweisungen das Guthaben nicht überziehen.
-3. Der Zielserver übernimmt genau einmal: eindeutiger Index auf
-   `(idempotency_key)` verhindert Doppelgutschrift.
-4. Ergebnis wird zurückgemeldet; der Absender erhält eine Nachricht mit der
-   tx-id und kann den Status mit `/eco pay status <tx-id>` prüfen.
-5. Schlägt die Zustellung bis `timeout-seconds` fehl, wird der Betrag über
-   eine **Rückbuchung** freigegeben — nicht durch stilles Rollback, damit
-   beide Seiten im Audit nachvollziehbar bleiben.
+1. Das Zielkonto muss bereits existieren (`findAsync`); ein unbekannter
+   Name führt zu `player-not-found`.
+2. Der Betrag wird geparst und normalisiert.
+3. `TransferData.create` erzeugt einen neuen Idempotenzschlüssel; ein
+   erneuter Befehl erzeugt einen **neuen** Schlüssel.
+4. `remoteTransferAsync` bucht synchron in der Datenbank (SQLite oder
+   MySQL) und liefert `APPLIED`,
+   `DUPLICATE`, `INSUFFICIENT_FUNDS`, `MAX_BALANCE`, `UNSUPPORTED` oder
+   `FAILED`.
+5. Bei `APPLIED` nennt die Nachricht die tx-id. Einen Statusbefehl gibt es
+   nicht.
+
+**Nicht implementiert:** Reservierung vor der Zustellung, Outbox/Retry,
+Rückbuchung nach Timeout, `PROXY`-Zustellung und `/eco pay status`.
+`timeout-seconds` hat keine Wirkung.
 
 ```
 economy_transfers
@@ -968,19 +1008,23 @@ economy_transfers
 Regeln:
 
 - Die Befehlssyntax bleibt in allen Modi identisch. Was sich ändert, ist
-  die Fehlermeldung: `command.pay.error.recipient-online-only` (LOCAL) vs.
-  `command.pay.error.no-route` (PROXY ohne Zielserver).
+  die Fehlermeldung: `command.pay.error.no-route` (PROXY ohne Zielserver)
+  bzw. `player-not-found` (LOCAL/ANY ohne Konto).
 - Ohne `economysystem.pay.remote` ist ein Ziel auf einem anderen Server ein
   Fehler, keine stille Umleitung.
-- `--dry-run` ist bei `pay` **nicht** zulässig (eine Vorschau einer
-  Überweisung hat keinen Nutzen und verwirrt); die Struktur erlaubt es
-  technisch, die Fachregel verbietet es.
+- `--dry-run` wird bei `pay` zwar geparst, aber **ignoriert**; es gibt keine
+  Vorschau. Die Struktur erlaubt das Flag technisch, die Fachlogik wertet
+  es nicht aus.
 
 ### 11.3 Cache-Kohärenz
 
 Heute hält jeder Server seine Konten im Speicher und schreibt asynchron.
 Im Netzwerk bedeutet das: Server A sieht Guthaben von Server B erst, wenn
 B gespeichert hat — und niemand merkt, dass der Wert veraltet ist.
+
+**Umsetzungsstand:** `network.invalidation` und
+`network.cache-ttl-seconds` werden gelesen, aber **nicht angewendet**. Die
+folgende Beschreibung ist Zielstruktur, nicht aktuelles Verhalten.
 
 Zielstruktur:
 
@@ -1017,11 +1061,10 @@ interest:
 - Der Zyklus selbst ist idempotent: `economy_interest_runs` mit eindeutigem
   Schlüssel `(scope, cycle_key)`. Ein doppelt gestarteter Lauf schreibt
   nichts.
-- `/eco admin interest run` (⏳) prüft die Lease und antwortet bei fremdem
-  Halter mit `command.admin.interest.error.leased` inklusive Server und
-  Restlaufzeit — es wartet nicht und überschreibt nicht.
-- `/eco admin interest run` ist bestätigungspflichtig; mit `--dry-run`
-  werden nur die berechneten Summen gezeigt.
+- `/eco admin interest run` ist **nicht implementiert**. Es gibt keinen
+  manuellen Lauf, keine Lease-Konfliktmeldung und kein `--dry-run`.
+- Der automatische Zyklus nutzt die Lease und `interest_runs`; das ist der
+  einzige implementierte Weg.
 
 ### 11.5 Reload
 
@@ -1048,26 +1091,27 @@ economy_audit
   server_id     VARCHAR(32)
   scope         VARCHAR(32)
   actor_uuid    CHAR(36)   NULL
-  actor_name    VARCHAR(32) NULL
+  actor_name    VARCHAR(64) NULL
   origin        ENUM(PLAYER, CONSOLE, GUI, API, SCHEDULER)
   action        VARCHAR(48)            -- "pay", "admin.balance.set"
   target_uuid   CHAR(36)   NULL
-  target_name   VARCHAR(32) NULL
+  target_name   VARCHAR(64) NULL
   amount        DECIMAL(30,8) NULL
   balance_after DECIMAL(30,8) NULL
   reason        VARCHAR(160) NULL
   result        ENUM(APPLIED, REJECTED, DRY_RUN)
 ```
 
-- **Jede** schreibende Aktion erzeugt genau einen Eintrag; die tx-id wird
-  dem Aufrufer angezeigt.
-- Abgelehnte Admin-Aktionen werden mit `REJECTED` protokolliert
-  (fehlendes Guthaben, Lease-Konflikt, Read-Only), reine
-  Rate-Limit-Ablehnungen nicht — sonst flutet ein Script das Log.
-- Im YAML-Modus liegt das Audit als `audit/<yyyy-MM>.yml` vor, mit
-  Aufbewahrungsgrenze `audit.retention-months` und identischem Aufbau.
-- `/eco admin audit` ist lesend, hat einen Cooldown und zeigt höchstens
-  10 Einträge pro Seite.
+- **Nur `remoteTransferAsync`** erzeugt heute einen Eintrag, und nur bei
+  `storage.type: SQLITE` oder `MYSQL`. Lokale `/pay`-, Admin-, Zins- und
+  Kreditbuchungen schreiben kein Audit.
+- SQLite bildet dasselbe Schema mit `TEXT`-Spalten ab (Beträge als
+  BigDecimal-Zeichenkette) und führt es in der eigenen Datei.
+- Abgelehnte Aktionen werden nicht protokolliert; es gibt keinen
+  `REJECTED`-Pfad für Admin-Buchungen.
+- Einen YAML-Audit gibt es **nicht**; `audit/<yyyy-MM>.yml` ist nicht
+  implementiert.
+- `/eco admin audit` ist nicht implementiert.
 - Die Audit-Daten sind **keine** Quelle für Kontostände — sie sind Spur,
   nicht Wahrheit.
 
@@ -1112,11 +1156,12 @@ network:
 | `pay` | ✅ | `error.read-only` |
 | `credit.take`, `credit.repay` | ✅ | `error.read-only` |
 | `admin.balance.*` | ✅ | `error.read-only` |
-| `admin.credit.forgive` | ✅ | `error.read-only` |
-| `admin.interest.*` | ✅ | nur `show` |
-| `admin.reload local` | ✅ | ✅ |
-| `admin.reload network` | ✅ | `error.read-only` |
-| `admin.network.*`, `admin.audit` | ✅ | ✅ (lesend) |
+| `admin.credit.forgive` ⏳ | nicht implementiert | nicht implementiert |
+| `admin.interest.show` | ✅ | ✅ |
+| `admin.interest.set` | ✅ | `error.read-only` |
+| `admin.reload` (lokal) | ✅ | ✅ |
+| `admin.reload network` ⏳ | nicht implementiert | nicht implementiert |
+| `admin.network.*`, `admin.audit` ⏳ | nicht implementiert | laut Positivliste erlaubt, aber ohne Funktion |
 
 `READ_ONLY` ist für Lobby-, Proxy- und Anzeige-Server gedacht: Sie zeigen
 Guthaben an, schreiben aber nie. Die Prüfung sitzt im Router **vor** der
@@ -1178,7 +1223,7 @@ Alle in `README.md` dokumentierten Aufrufe bleiben gültig:
 | Bestehende Installation, Einzelserver | keiner — Kurzbefehle, Aliase und Berechtigungen funktionieren weiter |
 | Umstieg auf `/eco` | keiner — optional, beide Wurzeln funktionieren |
 | Umstieg auf neue Permissions | optional, `economysystem.*` bleibt gültig |
-| Netzwerkbetrieb | `network:`-Block in `settings.yml`, Datenmigration auf Scopes, Proxy-Messaging oder Redis für Invalidierung |
+| Netzwerkbetrieb | `network:`-Block in `settings.yml`; **keine** Scope-Datenmigration (Scope teilt keine Konten). Proxy-Messaging/Redis sind nicht implementiert. |
 
 ### 12.4 Was Entwickler tun müssen
 
@@ -1187,7 +1232,7 @@ Alle in `README.md` dokumentierten Aufrufe bleiben gültig:
 | Neuer Befehl | Modul + ein Eintrag in der Registry (Abschnitt 10.4) |
 | Neue Untergruppe | ein Gruppenmodul mit `register(CommandTree)` |
 | Neue Permission | nur bei neuer Capability; sonst aus dem Pfad abgeleitet |
-| Neuer Message-Key | `messages.yml` + `config-version` erhöhen |
+| Neuer Message-Key | `messages.yml` + Version in `config-version.yml` erhöhen |
 
 ---
 
@@ -1238,23 +1283,26 @@ Ein neuer oder geänderter Befehl ist fertig, wenn alle Punkte zutreffen:
 - [ ] `usage` nennt die vollständige kanonische Syntax.
 - [ ] `playerOnly` korrekt gesetzt, Konsole getestet.
 - [ ] Cooldown/Rate-Limit gesetzt, wo Geld fließt.
-- [ ] `--dry-run` unterstützt, wenn der Pfad schreibt.
-- [ ] `--confirm` verlangt, wenn der Pfad zerstört (`set`, `reset`,
-      `forgive`, `run`, `reload network`).
+- [ ] `--dry-run` ist derzeit **nicht implementiert** (⏳); nicht als
+      vorhanden dokumentieren.
+- [ ] `--confirm` wird bei `set` und `reset` verlangt. `forgive`, `run` und
+      `reload network` sind nicht implementiert (⏳).
 - [ ] `READ_ONLY`-Modus berücksichtigt.
 
 **Daten**
 
 - [ ] Änderung läuft ausschließlich über einen Dienst (R10).
 - [ ] Atomar: Konto und abhängige Datensätze in einem Aufruf.
-- [ ] Idempotent über die tx-id.
-- [ ] Genau ein Audit-Eintrag, `origin` korrekt gesetzt.
+- [ ] Idempotenz über `idempotency_key` gilt heute nur für `ANY`-Transfers.
+- [ ] Audit wird heute nur für `remoteTransferAsync` und nur bei
+      SQLite/MySQL geschrieben; andere Pfade haben keinen Audit-Eintrag.
 - [ ] Keine Geldentscheidung auf Basis eines Cache-Werts.
 
 **Dokumentation**
 
-- [ ] Message-Keys nach 9.1, `config-version` erhöht.
-- [ ] Hilfe-Beitrag vorhanden und permission-abhängig sichtbar.
+- [ ] Message-Keys nach 9.1, Version in `config-version.yml` erhöht.
+- [ ] `/eco help`-Listen in `messages.yml` und ggf. `help.yml` ergänzt;
+      eine Modul-/Registry-Hilfe gibt es nicht.
 - [ ] `README.md`-Befehlstabelle ergänzt (oder auf diese Datei verwiesen).
 - [ ] Änderung in `Commands.md` eingetragen, falls die Struktur betroffen ist.
 
@@ -1262,7 +1310,9 @@ Ein neuer oder geänderter Befehl ist fertig, wenn alle Punkte zutreffen:
 
 - [ ] Dev-Build mit `tests.enabled: true` oder Unit-Test deckt den
       Erfolgsfall und mindestens zwei Fehlerfälle ab.
-- [ ] Zwei aufeinanderfolgende Aufrufe mit gleicher tx-id ändern nur einmal.
+- [ ] Bei `ANY`: derselbe Transfer-Datensatz mit gleichem
+      `idempotency_key` ändert nur einmal. Ein neuer Befehl erzeugt einen
+      neuen Schlüssel und ist **kein** Retry-Schutz.
 - [ ] Auf einem zweiten Server geprüft, wenn der Pfad Netzwerkbezug hat.
 
 ---
@@ -1327,14 +1377,15 @@ Ausgabe — nicht jedes Modul für sich.
   `--dry-run`, `--confirm`, `--player`, `--action`, `--server`, `--scope`)
   nach Abschnitt 6.4; unbekannter Pfad → `error.unknown-subcommand` mit
   Vorschlag aus den Nachbarschaftssegmenten.
-- Die achtstufige Prüfreihenfolge aus 6.7 genau einmal implementieren
-  (Registrierung → Pfad → `READ_ONLY` → Permission → `playerOnly` →
-  Flags → Cooldown → Argumente), nicht in den Modulen.
+- Die Prüfreihenfolge aus 6.7 genau einmal implementieren
+  (Pfad → `playerOnly` → `READ_ONLY` → Permission → Syntax/Flags →
+  Bestätigung → Rate-Limit/Cooldown → Ausführung), nicht in den Modulen.
 - Permission `economysystem.command.<pfad>` ableiten; alt und neu werden
   mit ODER akzeptiert (7.4). `economysystem.admin` bleibt Wildcard.
 - `messages.yml` um die neuen Keys ergänzen (alte bleiben als Fallback,
-  12.2), Hilfe aus der Registry statt aus gepflegter `help.yml`,
-  Tab-Vervollständigung permission-gefiltert.
+  12.2). `/eco help` nutzt die Listen `help`/`help-admin` aus
+  `messages.yml`; `/eco admin help` nutzt `help.yml`. Eine Registry-Hilfe
+  ist nicht implementiert. Tab-Vervollständigung permission-gefiltert.
 
 **Fertig, wenn:** ein Dummy-Modul ohne Sonderbehandlung korrekt antwortet,
 `usage` die vollständige kanonische Syntax nennt, Tab nichts Unerlaubtes
@@ -1344,7 +1395,7 @@ zeigt und ein Spieler ohne Permission nur `error.no-permission` sieht.
 
 - Schema aus Abschnitt 8: `subcommand-words` (deutsche Wörter wie
   `bezahlen`, `geld`, `zinsen`), `shortcuts`, `suggestions`;
-  `config-version: 2`.
+  Version 2 in `config-version.yml`.
 - Migration v1 → v2 beim Laden: v1 kennt nur `commands.<name>.aliases`,
   diese werden als `aliases` übernommen, dazu ein Log-Hinweis auf die neue
   Version. Kein Serverbetreiber muss eine Datei anfassen.
@@ -1361,9 +1412,11 @@ absichtlich falscher Pfad in der Konfiguration eine Warnung erzeugt.
 Ziel: jeder Pfad aus Abschnitt 5 ist ein eigenes Modul, kein `switch` und
 kein Reflective-Loading mehr.
 
-- Module für `balance` (+ `top`), `pay` (+ `status`),
+- Module für `balance` (+ `top`), `pay` (ohne `status`),
   `credit.{take,repay,info,list}`, `gui`, `info`, `help` und
-  `admin.{balance,credit,interest,reload,audit,test}`.
+  `admin.{balance,credit,interest,reload,test}`. `pay.status`,
+  `admin.audit`, `admin.network` und `admin.interest.run` sind nicht
+  implementiert.
 - `switch` mit den hartcodierten deutschen Synonymen (`geld`, `status`,
   `zinsen`, `test`) in `EconomySystemAdminCommand` auflösen — diese Wörter
   gehören ab jetzt in `subcommand-words` (Schritt 3).
@@ -1392,13 +1445,14 @@ Das Einzelserververhalten bleibt mit den Standardwerten
   `result`), `economy_locks` (Lease pro Scope), `economy_interest_runs`
   (`(scope, cycle_key)` UNIQUE), `accounts.revision`; die DDL läuft als
   Migration im `MySqlStorage`.
-- Cross-Server-`pay` und Cache-Invalidierung hinter dem
-  `transfer`-Schalter, standardmäßig aus.
+- `ANY`-Transfer ist verfügbar, wenn `network.transfer.mode: ANY` und
+  `economysystem.pay.remote` gesetzt sind. `PROXY` und
+  Cache-Invalidierung sind **nicht** implementiert.
 
 **Fertig, wenn:** das Einzelserververhalten identisch zu Schritt 4 ist,
-zwei Server mit demselben Scope einen Kontostand teilen, zwei Aufrufe mit
-gleicher tx-id nur einmal buchen und die Lease einen parallelen Zinslauf
-verhindert.
+zwei Server mit derselben Datenbank denselben Kontostand sehen (der Scope
+selbst teilt keine Konten), ein Transfer mit gleichem `idempotency_key`
+nur einmal bucht und die Lease einen parallelen Zinslauf verhindert.
 
 ### 15.7 Regeln für die Abarbeitung
 

@@ -1,5 +1,6 @@
 package de.Minefalo.economySystem.command;
 
+import de.Minefalo.economySystem.permission.PermissionService;
 import org.bukkit.command.CommandSender;
 
 import java.util.ArrayList;
@@ -26,13 +27,14 @@ public final class CommandParser {
     private final CommandTree tree;
     private final Map<String, String> subcommandWords;
     private final int maxReasonLength;
+    private final PermissionService permissions;
 
     /**
      * @param tree            Befehlsbaum, gegen den Pfade aufgelöst werden
      * @param subcommandWords Synonym → kanonisches Wort aus {@code commands.yml}
      */
     public CommandParser(CommandTree tree, Map<String, String> subcommandWords) {
-        this(tree, subcommandWords, DEFAULT_REASON_MAX_LENGTH);
+        this(tree, subcommandWords, DEFAULT_REASON_MAX_LENGTH, null);
     }
 
     /**
@@ -41,9 +43,19 @@ public final class CommandParser {
      */
     public CommandParser(CommandTree tree, Map<String, String> subcommandWords,
                          int maxReasonLength) {
+        this(tree, subcommandWords, maxReasonLength, null);
+    }
+
+    /**
+     * @param permissions Rollen-Prüfung aus der {@code roles.yml}; {@code null}
+     *                    prüft nur die normalen Bukkit-Permissions
+     */
+    public CommandParser(CommandTree tree, Map<String, String> subcommandWords,
+                         int maxReasonLength, PermissionService permissions) {
         this.tree = tree;
         this.subcommandWords = subcommandWords == null ? Map.of() : Map.copyOf(subcommandWords);
         this.maxReasonLength = Math.max(1, Math.min(160, maxReasonLength));
+        this.permissions = permissions;
     }
 
     // ------------------------------------------------------------------
@@ -184,10 +196,14 @@ public final class CommandParser {
         return null;
     }
 
-    private static boolean grantedFlag(CommandSender sender, Flag flag) {
-        return sender.hasPermission(flag.permission())
-                || sender.hasPermission(CommandPermissions.ADMIN)
-                || sender.hasPermission(CommandPermissions.LEGACY_ADMIN);
+    private boolean grantedFlag(CommandSender sender, Flag flag) {
+        return has(sender, flag.permission())
+                || has(sender, CommandPermissions.ADMIN)
+                || has(sender, CommandPermissions.LEGACY_ADMIN);
+    }
+
+    private boolean has(CommandSender sender, String node) {
+        return permissions == null ? sender.hasPermission(node) : permissions.has(sender, node);
     }
 
     private static boolean isAdminPath(String path) {

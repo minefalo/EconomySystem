@@ -63,7 +63,7 @@ public final class AdminTestInterestCycleModule extends AbstractModule {
         if (!plugin.settings().testsEnabled()) {
             return CommandResult.rejected("tests-disabled");
         }
-        if (!CommandPermissions.granted(sender, PERMISSION_TESTS)) {
+        if (!CommandPermissions.granted(plugin.permissions(), sender, PERMISSION_TESTS)) {
             return CommandResult.rejected("command._default.error.no-permission");
         }
         if (!plugin.settings().interest().enabled()) {

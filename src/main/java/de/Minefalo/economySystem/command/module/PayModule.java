@@ -24,8 +24,9 @@ import java.util.concurrent.CompletableFuture;
  * einen anderen Spieler.
  *
  * <p>Die Permission prüft der Router ({@code economysystem.command.pay} oder
- * der bisherige Knoten). Im Modus {@code LOCAL} muss das Ziel online sein; das
- * bleibt so, bis {@code network.transfer.mode} umgestellt wird.</p>
+ * der bisherige Knoten). Im Modus {@code LOCAL} wird auch an offline Spieler
+ * gebucht, sofern das Konto bereits existiert; {@code ANY} nutzt weiterhin
+ * die idempotente Fernbuchung im Speicher.</p>
  */
 public final class PayModule extends AbstractModule {
 
@@ -77,12 +78,19 @@ public final class PayModule extends AbstractModule {
         if (args.size() != 2) {
             return preparation;
         }
-        if (Bukkit.getPlayerExact(args.get(0)) != null) {
-            return CompletableFuture.allOf(preparation, economy.findAsync(args.get(0)));
+        String name = args.get(0);
+        if (Bukkit.getPlayerExact(name) != null) {
+            return CompletableFuture.allOf(preparation, economy.findAsync(name));
         }
-        // Ziel nicht auf diesem Server: buchen, wenn der Modus es erlaubt (11.2).
-        return CompletableFuture.allOf(preparation,
-                prepareRemote(context, player, args.get(0), args.get(1)));
+        // Offline-Ziel: das gespeicherte Konto laden. Im Modus ANY bucht
+        // prepareRemote() zusätzlich idempotent im Speicher (11.2).
+        Settings.Network network = plugin.settings().network();
+        if (network.transfer().mode() == Settings.TransferMode.ANY
+                && plugin.permissions().has(player, PERMISSION_REMOTE)) {
+            return CompletableFuture.allOf(preparation,
+                    prepareRemote(context, player, name, args.get(1)));
+        }
+        return CompletableFuture.allOf(preparation, economy.findAsync(name));
     }
 
     /**
@@ -94,7 +102,7 @@ public final class PayModule extends AbstractModule {
                                                String name, String rawAmount) {
         Settings.Network network = plugin.settings().network();
         if (network.transfer().mode() != Settings.TransferMode.ANY
-                || !player.hasPermission(PERMISSION_REMOTE)) {
+                || !plugin.permissions().has(player, PERMISSION_REMOTE)) {
             return CompletableFuture.completedFuture(null);
         }
         Optional<BigDecimal> parsed = currency().parseAmount(rawAmount);
@@ -146,18 +154,42 @@ public final class PayModule extends AbstractModule {
 
         Player recipient = Bukkit.getPlayerExact(args.get(0));
         if (recipient == null) {
-            return remote(context, args.get(0), args.get(1));
+            return offline(context, args.get(0), args.get(1));
         }
         Account source = economy.account(player.getUniqueId(), player.getName());
         Account target = economy.account(recipient.getUniqueId(), recipient.getName());
         if (target == null) {
             return CommandResult.handled();
         }
+        return transfer(context, source, target, args.get(1));
+    }
+
+    /**
+     * Ziel ist nicht auf diesem Server online. Im Modus {@code LOCAL} wird
+     * gegen das bereits geladene, gespeicherte Konto gebucht; {@code PROXY}
+     * und {@code ANY} behalten ihr Netzwerkverhalten.
+     */
+    private CommandResult offline(CommandContext context, String name, String rawAmount) {
+        if (plugin.settings().network().transfer().mode() == Settings.TransferMode.LOCAL) {
+            Optional<Account> found = economy.find(name);
+            if (found.isEmpty()) {
+                return CommandResult.rejected("player-not-found").with("player", name);
+            }
+            Player player = (Player) context.sender();
+            Account source = economy.account(player.getUniqueId(), player.getName());
+            return transfer(context, source, found.get(), rawAmount);
+        }
+        return remote(context, name, rawAmount);
+    }
+
+    private CommandResult transfer(CommandContext context, Account source, Account target,
+                                   String rawAmount) {
+        Player player = (Player) context.sender();
         if (target.uniqueId().equals(source.uniqueId())) {
             return CommandResult.rejected("pay-self");
         }
 
-        BigDecimal amount = parseAmount(sender, args.get(1), false);
+        BigDecimal amount = parseAmount(player, rawAmount, false);
         if (amount == null) {
             return CommandResult.handled();
         }
@@ -204,15 +236,12 @@ public final class PayModule extends AbstractModule {
      */
     private CommandResult remote(CommandContext context, String name, String rawAmount) {
         Settings.Network network = plugin.settings().network();
-        if (network.transfer().mode() == Settings.TransferMode.LOCAL) {
-            return CommandResult.rejected("command.pay.error.recipient-online-only");
-        }
         // PROXY braucht einen bekannten Zielserver; eine Serverliste gibt es
         // noch nicht, deshalb ist das kein stilles Umleiten (11.2).
         if (network.transfer().mode() == Settings.TransferMode.PROXY) {
             return CommandResult.rejected("command.pay.error.no-route");
         }
-        if (!context.sender().hasPermission(PERMISSION_REMOTE)) {
+        if (!plugin.permissions().has(context.sender(), PERMISSION_REMOTE)) {
             return CommandResult.rejected("command.pay.error.remote-not-allowed");
         }
         if (context.state().get(STATE_REMOTE) instanceof RemoteOutcome outcome) {
@@ -242,11 +271,11 @@ public final class PayModule extends AbstractModule {
     @Override
     public List<String> complete(CommandContext context) {
         List<String> raw = context.args().raw();
-        if (raw.isEmpty() || !CommandPermissions.granted(context.sender(), PERMISSION_PAY)) {
+        if (raw.isEmpty() || !CommandPermissions.granted(plugin.permissions(), context.sender(), PERMISSION_PAY)) {
             return List.of();
         }
         if (raw.size() == 1) {
-            return filter(onlinePlayerNames(), raw.get(0));
+            return playerNameSuggestions(raw.get(0));
         }
         if (raw.size() == 2) {
             return filter(plugin.settings().suggestions().amounts(), raw.get(1));

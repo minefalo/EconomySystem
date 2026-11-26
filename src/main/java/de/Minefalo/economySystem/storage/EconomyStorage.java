@@ -9,7 +9,7 @@ import java.util.UUID;
 
 /**
  * Abstraktion über die persistente Speicherung von Konten.
- * Die Implementierungen (YAML, MySQL) arbeiten ausschließlich mit
+ * Die Implementierungen (SQLite, YAML, MySQL) arbeiten ausschließlich mit
  * {@link AccountData}-Snapshots, sodass ein Wechsel der Speicherart
  * ohne Änderungen an der Economy-Logik möglich ist.
  */
@@ -37,7 +37,7 @@ public interface EconomyStorage {
      * <p>Diese Abfrage darf <b>nicht</b> den vollständigen Bestand laden:
      * Sie ist ohne Recht für jeden Spieler auslösbar (Bestenliste, Placeholder)
      * und läuft auf dem einzigen Storage-Thread. Deshalb überschreiben die
-     * Implementierungen sie mit einer begrenzten Abfrage (MySQL:
+     * Implementierungen sie mit einer begrenzten Abfrage (SQLite/MySQL:
      * {@code ORDER BY balance DESC LIMIT}, YAML: In-Memory-Index). Die
      * Standardimplementierung sortiert nur den bereits geladenen Bestand und
      * ist ausschließlich als Rückfall für Speicher ohne eigene Abfrage gedacht.</p>
@@ -72,7 +72,7 @@ public interface EconomyStorage {
     /**
      * Speichert Konto- und Kreditänderungen in einem Schritt. Die
      * Implementierungen müssen dafür sorgen, dass ein Absturz nicht zu
-     * einem halb gespeicherten Zustand führt (MySQL: eine Transaktion,
+     * einem halb gespeicherten Zustand führt (SQLite/MySQL: eine Transaktion,
      * YAML: Journal, das beim Start nachgezogen wird).
      *
      * @param accounts        zu speichernde Kontostände
@@ -129,6 +129,38 @@ public interface EconomyStorage {
      * verworfen.
      */
     default void recordAudit(AuditEntry entry) {
+    }
+
+    /**
+     * Prüft, ob eine Transaktions-ID bereits dauerhaft gebucht wurde. Die
+     * Prüfung ist die schnelle Vorabkontrolle der Idempotenz; verbindlich ist
+     * erst {@link #saveIdempotent(AccountData, UUID)}.
+     *
+     * @return {@code true}, wenn die ID bereits verarbeitet wurde
+     */
+    default boolean hasTransaction(UUID transactionId) {
+        return false;
+    }
+
+    /**
+     * Schreibt einen Kontostand und den Idempotenzschlüssel in einem Schritt.
+     *
+     * <p>Die Implementierungen müssen dafür sorgen, dass entweder beides
+     * geschrieben wird oder nichts: SQLite und MySQL nutzen eine Transaktion
+     * mit eindeutigem Schlüssel, YAML ein Journal samt Transaktionsregister. Ein
+     * zweiter Aufruf mit demselben Schlüssel ändert keinen Kontostand.</p>
+     *
+     * <p>Die Standardimplementierung ist nur für Speicher ohne eigene
+     * Idempotenz gedacht und schreibt ausschließlich das Konto.</p>
+     *
+     * @param account       neuer Kontostand
+     * @param transactionId Idempotenzschlüssel der Buchung
+     * @return {@code true}, wenn der Kontostand geschrieben wurde;
+     *         {@code false}, wenn die ID bereits verarbeitet war
+     */
+    default boolean saveIdempotent(AccountData account, UUID transactionId) {
+        save(account);
+        return true;
     }
 
     /**
@@ -192,7 +224,7 @@ public interface EconomyStorage {
     }
 
     /**
-     * @return Anzeigename des Speichers (z. B. "YAML" oder "MySQL")
+     * @return Anzeigename des Speichers (z. B. "SQLite", "YAML" oder "MySQL")
      */
     String name();
 

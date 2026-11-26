@@ -1,0 +1,17 @@
+# ==========================================================
+#  EconomySystem - Versionen der Konfigurationsdateien
+# ==========================================================
+# Jede Datei aus dem config-Ordner hat hier ihre Version als
+# ganze Zahl. Der Config-Updater pflegt die Werte beim Start
+# und bei /eco admin reload. Nicht manuell ändern.
+#
+# Ist eine Version höher als die der JAR-Vorlage, bleibt sie
+# erhalten; der Updater meldet das nur in der Konsole.
+# ==========================================================
+
+settings.yml: 6
+messages.yml: 9
+commands.yml: 2
+help.yml: 2
+gui.yml: 4
+roles.yml: 1

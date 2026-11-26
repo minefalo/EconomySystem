@@ -43,14 +43,20 @@ import java.util.logging.Logger;
  * {@code backup}-Ordner.</p>
  *
  * <p>Alle Konfigurationsdateien liegen unter {@code plugins/EconomySystem/config/}.
- * Daten wie {@code loans.yml} oder {@code accounts/} bleiben im Plugin-Ordner.</p>
+ * Daten wie {@code loans.yml} oder {@code accounts/} liegen unter
+ * {@code plugins/EconomySystem/data/}.</p>
  */
 public final class ConfigUpdater {
 
     private static final String CONFIG_FOLDER = "config";
     private static final String BACKUP_FOLDER = "backup";
     private static final String RESOURCE_PREFIX = "config/";
+    /** Zentrale Datei mit den Versionen aller Konfigurationsdateien. */
+    public static final String VERSION_FILE = "config-version.yml";
+    /** Veralteter Schlüssel; ältere Installationen tragen ihn noch in der Datei. */
     private static final String VERSION_KEY = "config-version";
+    private static final String FALLBACK_VERSION_FILE =
+            "# Versionen der Konfigurationsdateien. Wird vom Updater gepflegt.\n";
     private static final long MAX_FILE_SIZE = 64L * 1024L * 1024L;
     private static final int MAX_CODE_POINTS = 32 * 1024 * 1024;
 
@@ -130,6 +136,195 @@ public final class ConfigUpdater {
     }
 
     // ------------------------------------------------------------------
+    // Versionen
+    // ------------------------------------------------------------------
+
+    /**
+     * Version einer Konfigurationsdatei aus der {@code config-version.yml}.
+     *
+     * <p>Solange eine ältere Installation den Schlüssel noch in der Datei
+     * selbst trägt, zählt der größere der beiden Werte. So bleibt eine
+     * neuere Datei auch beim ersten Start nach dem Wechsel erkannt.</p>
+     *
+     * @return die gespeicherte Version oder {@code 0}, wenn keine bekannt ist
+     */
+    public static int version(JavaPlugin plugin, String fileName) {
+        return version(file(plugin, VERSION_FILE), file(plugin, fileName), fileName);
+    }
+
+    static int version(File versionsFile, File target, String fileName) {
+        return Math.max(storedVersion(versionsFile, fileName), legacyVersion(target));
+    }
+
+    private static int storedVersion(File versionsFile, String fileName) {
+        if (!versionsFile.isFile()) {
+            return 0;
+        }
+        try {
+            return YamlConfiguration.loadConfiguration(versionsFile).getInt(fileName, 0);
+        } catch (RuntimeException exception) {
+            return 0;
+        }
+    }
+
+    private static int legacyVersion(File target) {
+        if (!target.isFile()) {
+            return 0;
+        }
+        try {
+            return YamlConfiguration.loadConfiguration(target).getInt(VERSION_KEY, 0);
+        } catch (RuntimeException exception) {
+            return 0;
+        }
+    }
+
+    /**
+     * Version einer Datei aus der JAR-Vorlage der {@code config-version.yml}.
+     */
+    private static int bundledVersion(JavaPlugin plugin, String fileName) {
+        String text = readResource(plugin, VERSION_FILE);
+        if (text == null) {
+            return 0;
+        }
+        YamlConfiguration versions = new YamlConfiguration();
+        try {
+            versions.loadFromString(text);
+        } catch (InvalidConfigurationException exception) {
+            plugin.getLogger().warning("JAR-Vorlage " + RESOURCE_PREFIX + VERSION_FILE
+                    + " ist kein gültiges YAML: " + exception.getMessage());
+            return 0;
+        }
+        return versions.getInt(fileName, 0);
+    }
+
+    /**
+     * Schreibt die Version einer Datei in die {@code config-version.yml}.
+     */
+    private static boolean storeVersion(JavaPlugin plugin, String fileName, int version) {
+        return storeVersion(file(plugin, VERSION_FILE), readResource(plugin, VERSION_FILE),
+                fileName, version, plugin.getLogger());
+    }
+
+    /**
+     * Setzt eine Version in der bestehenden Versiondatei. Fehlt die Datei,
+     * entsteht sie aus {@code template}. Kommentare bleiben erhalten, und ein
+     * unveränderter Wert wird nicht neu geschrieben.
+     */
+    static boolean storeVersion(File versionsFile, String template, String fileName, int version,
+                                Logger logger) {
+        try {
+            File parent = versionsFile.getParentFile();
+            if (parent != null) {
+                Files.createDirectories(parent.toPath());
+            }
+
+            if (!versionsFile.exists()) {
+                // Nur die gerade erfolgreich abgeglichene Datei eintragen.
+                // Würden alle Vorlagenwerte übernommen, gälte eine Datei
+                // mit fehlgeschlagenem Abgleich fälschlich als aktuell.
+                Files.writeString(versionsFile.toPath(),
+                        versionHeader(template) + fileName + ": " + version + "\n",
+                        StandardCharsets.UTF_8);
+                return true;
+            }
+
+            String before = Files.readString(versionsFile.toPath(), StandardCharsets.UTF_8);
+            String after = setVersionText(before, fileName, version);
+            if (after.equals(before)) {
+                return false;
+            }
+            Files.writeString(versionsFile.toPath(), after, StandardCharsets.UTF_8);
+            return true;
+        } catch (Exception exception) {
+            logger.warning(VERSION_FILE + " konnte nicht aktualisiert werden;"
+                    + " die Versionen bleiben unverändert. (" + exception.getMessage() + ")");
+            return false;
+        }
+    }
+
+    /**
+     * Übernimmt den Kopfkommentar der JAR-Vorlage für eine neu angelegte
+     * Versiondatei. Die Einträge entstehen erst beim erfolgreichen Abgleich
+     * der jeweiligen Datei.
+     */
+    private static String versionHeader(String template) {
+        if (template == null || template.isBlank()) {
+            return FALLBACK_VERSION_FILE;
+        }
+        StringBuilder header = new StringBuilder();
+        for (String line : template.split("\n", -1)) {
+            String trimmed = line.trim();
+            if (!trimmed.isEmpty() && !trimmed.startsWith("#")) {
+                break;
+            }
+            header.append(line).append('\n');
+        }
+        return header.toString().isBlank() ? FALLBACK_VERSION_FILE : header.toString();
+    }
+
+    /**
+     * Setzt {@code <fileName>: <version>} in einem YAML-Mapping, ohne die
+     * übrigen Einträge und Kommentare zu verändern.
+     */
+    static String setVersionText(String text, String fileName, int version) {
+        String base = text == null || text.isBlank() ? FALLBACK_VERSION_FILE : text;
+        LoaderOptions options = loaderOptions();
+        DumperOptions output = dumperOptions(base);
+        Yaml yaml = new Yaml(new SafeConstructor(options), new Representer(output), output, options);
+        Node root = yaml.compose(new StringReader(base));
+        if (!(root instanceof MappingNode mapping) || !Tag.MAP.equals(mapping.getTag())) {
+            // Leere oder reine Kommentardatei: Eintrag anhängen und den
+            // Kopfkommentar erhalten. SnakeYAML liefert für solche Texte
+            // einen Mapping-Knoten mit dem Tag "comment" und ohne Werte.
+            String header = base.endsWith("\n") ? base : base + "\n";
+            return header + fileName + ": " + version + "\n";
+        }
+        if (!setInt(mapping, fileName, version)) {
+            return base;
+        }
+        return write(yaml, mapping);
+    }
+
+    /**
+     * Ersetzt oder ergänzt einen ganzzahligen Eintrag im Mapping.
+     *
+     * @return {@code true}, wenn sich der Wert geändert hat
+     */
+    private static boolean setInt(MappingNode mapping, String key, int version) {
+        List<NodeTuple> tuples = new ArrayList<>(mapping.getValue().size());
+        boolean replaced = false;
+        for (NodeTuple tuple : mapping.getValue()) {
+            if (!replaced
+                    && tuple.getKeyNode() instanceof ScalarNode keyNode
+                    && key.equals(keyNode.getValue())
+                    && tuple.getValueNode() instanceof ScalarNode scalar) {
+                String value = Integer.toString(version);
+                if (value.equals(scalar.getValue().trim())) {
+                    return false;
+                }
+                ScalarNode replacement = new ScalarNode(Tag.INT, value,
+                        scalar.getStartMark(), scalar.getEndMark(), DumperOptions.ScalarStyle.PLAIN);
+                copyComments(scalar, replacement);
+                tuples.add(new NodeTuple(tuple.getKeyNode(), replacement));
+                replaced = true;
+            } else {
+                tuples.add(tuple);
+            }
+        }
+        if (replaced) {
+            mapping.setValue(tuples);
+            return true;
+        }
+
+        tuples.add(new NodeTuple(
+                new ScalarNode(Tag.STR, key, null, null, DumperOptions.ScalarStyle.PLAIN),
+                new ScalarNode(Tag.INT, Integer.toString(version), null, null,
+                        DumperOptions.ScalarStyle.PLAIN)));
+        mapping.setValue(tuples);
+        return true;
+    }
+
+    // ------------------------------------------------------------------
     // Abgleich
     // ------------------------------------------------------------------
 
@@ -146,10 +341,36 @@ public final class ConfigUpdater {
     /**
      * Wie {@link #update(JavaPlugin, String)}, hält aber bis zu
      * {@code backupCount} Sicherungen je Datei vor.
+     *
+     * <p>Die Dateiversion steht in der {@code config-version.yml}. Sie wird
+     * nach erfolgreichem Abgleich auf den größeren Wert aus vorhandener
+     * Version und JAR-Vorlage gesetzt.</p>
      */
     public static boolean update(JavaPlugin plugin, String fileName, int backupCount) {
-        return update(file(plugin, fileName), readResource(plugin, fileName),
-                plugin.getLogger(), markupFor(fileName), backupCount);
+        String template = readResource(plugin, fileName);
+        if (template == null) {
+            return false;
+        }
+
+        int bundledVersion = bundledVersion(plugin, fileName);
+        int installedVersion = version(plugin, fileName);
+        if (installedVersion > bundledVersion) {
+            plugin.getLogger().warning("Die Version von " + fileName + " in " + VERSION_FILE
+                    + " ist " + installedVersion + ", die Vorlage hat " + bundledVersion
+                    + " - Werte bleiben erhalten, Kommentare stammen aus der Vorlage.");
+        }
+
+        Result result = apply(file(plugin, fileName), template, plugin.getLogger(),
+                markupFor(fileName), backupCount);
+        if (result == Result.FAILED) {
+            // Eine kaputte oder nicht schreibbare Datei wird nicht als
+            // aktuell markiert; sonst liefen spätere Migrationen nie.
+            return false;
+        }
+
+        int newVersion = Math.max(installedVersion, bundledVersion);
+        boolean stored = newVersion > 0 && storeVersion(plugin, fileName, newVersion);
+        return result == Result.CHANGED || stored;
     }
 
     /**
@@ -199,8 +420,20 @@ public final class ConfigUpdater {
 
     static boolean update(File target, String template, Logger logger, Markup markup,
                           int backupCount) {
+        return apply(target, template, logger, markup, backupCount) == Result.CHANGED;
+    }
+
+    /** Ergebnis eines Abgleichs, damit ein Fehler nicht als "unverändert" gilt. */
+    private enum Result {
+        UNCHANGED,
+        CHANGED,
+        FAILED
+    }
+
+    private static Result apply(File target, String template, Logger logger, Markup markup,
+                                int backupCount) {
         if (template == null) {
-            return false;
+            return Result.FAILED;
         }
 
         try {
@@ -212,7 +445,7 @@ public final class ConfigUpdater {
             if (!target.exists()) {
                 Files.writeString(target.toPath(), template, StandardCharsets.UTF_8);
                 logger.info(display(target) + " wurde aus dem JAR angelegt.");
-                return true;
+                return Result.CHANGED;
             }
 
             if (Files.size(target.toPath()) > MAX_FILE_SIZE) {
@@ -227,11 +460,11 @@ public final class ConfigUpdater {
             if (changed) {
                 logger.info(display(target) + " um aktuelle Standards und Kommentare ergänzt.");
             }
-            return changed;
+            return changed ? Result.CHANGED : Result.UNCHANGED;
         } catch (Exception exception) {
             logger.warning(display(target) + " konnte nicht abgeglichen werden;"
                     + " vorhandene Datei bleibt erhalten. (" + exception.getMessage() + ")");
-            return false;
+            return Result.FAILED;
         }
     }
 
@@ -255,17 +488,13 @@ public final class ConfigUpdater {
         MappingNode currentNode = constructor.document(
                 yaml.compose(new StringReader(content)), "Die vorhandene Datei");
 
-        int bundledVersion = versionOf(templateNode);
-        int installedVersion = versionOf(currentNode);
-        if (installedVersion > bundledVersion) {
-            logger.warning("Die vorhandene Datei hat config-version " + installedVersion
-                    + ", die Vorlage " + bundledVersion
-                    + " - Werte bleiben erhalten, Kommentare stammen aus der Vorlage.");
-        }
+        // Die Version steht seit dem Wechsel in config-version.yml. Ein
+        // alter Schlüssel in der Datei selbst wird beim Abgleich entfernt.
+        removeVersion(templateNode);
+        removeVersion(currentNode);
 
         Node merged = mergeNodes(templateNode, currentNode);
         merged = convertMarkup(merged, null, markup);
-        setVersion(merged, Math.max(installedVersion, bundledVersion));
 
         // SnakeYAML hängt eine Leerzeile vor dem ersten Schlüssel eines
         // Sequenzeintrags als Kommentar an diesen Schlüssel. Dadurch bricht
@@ -371,55 +600,17 @@ public final class ConfigUpdater {
         }
     }
 
-    /**
-     * Setzt {@code config-version} auf den größeren der beiden Werte. So
-     * bleibt eine neuere Datei als die Vorlage unverändert, während eine
-     * ältere Datei die aktuelle Version erhält.
-     */
-    private static void setVersion(Node node, int version) {
-        if (!(node instanceof MappingNode mapping)) {
-            return;
-        }
-        List<NodeTuple> tuples = new ArrayList<>(mapping.getValue().size());
-        boolean replaced = false;
-        for (NodeTuple tuple : mapping.getValue()) {
-            if (!replaced
-                    && tuple.getKeyNode() instanceof ScalarNode key
-                    && VERSION_KEY.equals(key.getValue())
-                    && tuple.getValueNode() instanceof ScalarNode scalar) {
-                ScalarNode value = new ScalarNode(Tag.INT, Integer.toString(version),
-                        scalar.getStartMark(), scalar.getEndMark(), DumperOptions.ScalarStyle.PLAIN);
-                copyComments(scalar, value);
-                tuples.add(new NodeTuple(tuple.getKeyNode(), value));
-                replaced = true;
-            } else {
-                tuples.add(tuple);
+    /** Entfernt den veralteten {@code config-version}-Schlüssel. */
+    private static void removeVersion(MappingNode root) {
+        List<NodeTuple> tuples = new ArrayList<>(root.getValue().size());
+        for (NodeTuple tuple : root.getValue()) {
+            if (tuple.getKeyNode() instanceof ScalarNode key
+                    && VERSION_KEY.equals(key.getValue())) {
+                continue;
             }
+            tuples.add(tuple);
         }
-        if (replaced) {
-            mapping.setValue(tuples);
-        }
-    }
-
-    private static int versionOf(MappingNode root) {
-        NodeTuple tuple = find(root, VERSION_KEY);
-        if (tuple == null || !(tuple.getValueNode() instanceof ScalarNode scalar)) {
-            return 0;
-        }
-        try {
-            return Integer.parseInt(scalar.getValue().trim());
-        } catch (NumberFormatException exception) {
-            return 0;
-        }
-    }
-
-    private static NodeTuple find(MappingNode mapping, String key) {
-        for (NodeTuple tuple : mapping.getValue()) {
-            if (tuple.getKeyNode() instanceof ScalarNode scalar && key.equals(scalar.getValue())) {
-                return tuple;
-            }
-        }
-        return null;
+        root.setValue(tuples);
     }
 
     // ------------------------------------------------------------------

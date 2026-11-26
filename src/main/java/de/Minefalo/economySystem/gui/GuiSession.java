@@ -7,8 +7,8 @@ import java.util.List;
 
 /**
  * Zustand einer laufenden Eingabe. Die Eingaben eines Items werden
- * nacheinander in Regler-, Amboss- oder Spielerauswahl-Inventaren
- * abgefragt; die Antworten ersetzen anschließend {@code {input1}} usw.
+ * nacheinander in Amboss- oder Spielerauswahl-Inventaren abgefragt; die
+ * Antworten ersetzen anschließend {@code {input1}} usw.
  */
 final class GuiSession {
 
@@ -18,14 +18,12 @@ final class GuiSession {
     private final List<String> answers = new ArrayList<>();
 
     private int index;
-    private long value;
     private Picker picker;
 
     GuiSession(List<GuiConfig.Input> inputs, List<String> commands, String originMenu) {
         this.inputs = inputs;
         this.commands = commands;
         this.originMenu = originMenu;
-        this.value = inputs.isEmpty() ? 0 : inputs.get(0).initial();
     }
 
     GuiConfig.Input current() {
@@ -46,9 +44,6 @@ final class GuiSession {
     void answer(String answer) {
         answers.add(answer);
         index++;
-        if (!finished()) {
-            value = current().initial();
-        }
     }
 
     List<String> answers() {
@@ -61,14 +56,6 @@ final class GuiSession {
 
     String originMenu() {
         return originMenu;
-    }
-
-    long value() {
-        return value;
-    }
-
-    void value(long value) {
-        this.value = value;
     }
 
     Picker picker() {
@@ -92,6 +79,7 @@ final class GuiSession {
         private GuiConfig.Input.Sort sort;
         private String search = "";
         private int page;
+        private AccountData selected;
         private List<AccountData> accounts = List.of();
         private boolean loading = true;
         private boolean loadingStarted;
@@ -125,6 +113,29 @@ final class GuiSession {
 
         GuiConfig.Input.Sort defaultSort() {
             return defaultSort;
+        }
+
+        /**
+         * Setzt Suche, Filter, Sortierung und Seite auf die Startwerte der
+         * Eingabe zurück.
+         */
+        void reset() {
+            this.filter = defaultFilter;
+            this.sort = defaultSort;
+            this.search = "";
+            this.page = 0;
+            this.selected = null;
+        }
+
+        /**
+         * Angeklickter Spieler, solange die Bestätigung offen ist.
+         */
+        AccountData selected() {
+            return selected;
+        }
+
+        void selected(AccountData selected) {
+            this.selected = selected;
         }
 
         String search() {

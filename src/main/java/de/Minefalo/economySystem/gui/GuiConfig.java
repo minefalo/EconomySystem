@@ -9,6 +9,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -27,8 +28,8 @@ import java.util.regex.PatternSyntaxException;
  * <p>Jedes Item hat einen Slot, ein Material, eine Permission und eine Liste
  * von Befehlen. Die Befehle werden beim Klick als Spieler ausgeführt.
  * Optional öffnet ein Item ein Untermenü ({@code open}) oder sammelt vorher
- * Eingaben über {@code inputs}: ganze Zahlen per Regler, Texte über einen
- * Amboss und Spieler über eine Kopfauswahl.</p>
+ * Eingaben über {@code inputs}: Zahlen und Texte über einen Amboss und
+ * Spieler über eine Kopfauswahl.</p>
  */
 public final class GuiConfig {
 
@@ -287,7 +288,7 @@ public final class GuiConfig {
             return;
         }
         YamlConfiguration existing = YamlConfiguration.loadConfiguration(file);
-        if (existing.getInt("config-version", 0) >= LAYOUT_VERSION) {
+        if (ConfigUpdater.version(plugin, "gui.yml") >= LAYOUT_VERSION) {
             return;
         }
         ConfigurationSection items = existing.getConfigurationSection("menus.main.items");
@@ -341,7 +342,8 @@ public final class GuiConfig {
 
         return switch (type) {
             case "number", "zahl" -> numberInput(map, prompt);
-            case "player", "spieler" -> new Input(Input.Type.PLAYER, prompt, 0, 0, 1, 0,
+            case "player", "spieler" -> new Input(Input.Type.PLAYER, prompt,
+                    BigDecimal.ZERO, BigDecimal.ZERO,
                     filter(text(map.get("filter"), "all")),
                     sort(text(map.get("sort"), "name-asc")),
                     null);
@@ -350,17 +352,16 @@ public final class GuiConfig {
     }
 
     private Input numberInput(Map<?, ?> map, String prompt) {
-        long min = Math.max(-MAX_NUMBER, number(map.get("min"), 0));
-        long step = Math.max(1, number(map.get("step"), 1));
-        long max = Math.min(MAX_NUMBER, number(map.get("max"), Math.max(min + step, 1000)));
-        if (max <= min) {
-            max = Math.min(MAX_NUMBER, min + step);
+        BigDecimal limit = BigDecimal.valueOf(MAX_NUMBER);
+        BigDecimal min = decimal(map.get("min"), BigDecimal.ZERO)
+                .max(limit.negate())
+                .min(limit);
+        BigDecimal max = decimal(map.get("max"), min.add(BigDecimal.ONE).max(BigDecimal.valueOf(1000)))
+                .min(limit);
+        if (max.compareTo(min) <= 0) {
+            max = min.add(BigDecimal.ONE).min(limit);
         }
-        if (step > max - min) {
-            step = Math.max(1, max - min);
-        }
-        long initial = clamp(number(map.get("default"), 100), min, max);
-        return new Input(Input.Type.NUMBER, prompt, min, max, step, snap(initial, min, max, step),
+        return new Input(Input.Type.NUMBER, prompt, min, max,
                 Input.Filter.ALL, Input.Sort.NAME_ASC, null);
     }
 
@@ -403,13 +404,25 @@ public final class GuiConfig {
         return raw == null ? fallback : String.valueOf(raw);
     }
 
-    private static long number(Object raw, long fallback) {
+    /**
+     * Liest einen Dezimalwert aus der Konfiguration. Damit dürfen
+     * {@code min} und {@code max} einer Zahleneingabe auch Cent-Beträge wie
+     * {@code 0.01} sein; ein Komma wird wie ein Punkt behandelt.
+     */
+    private static BigDecimal decimal(Object raw, BigDecimal fallback) {
+        if (raw instanceof BigDecimal value) {
+            return value;
+        }
         if (raw instanceof Number value) {
-            return value.longValue();
+            try {
+                return new BigDecimal(value.toString());
+            } catch (NumberFormatException ignored) {
+                // Fällt unten auf den Standardwert zurück.
+            }
         }
         if (raw instanceof String value) {
             try {
-                return Long.parseLong(value.trim());
+                return new BigDecimal(value.trim().replace(',', '.'));
             } catch (NumberFormatException ignored) {
                 // Fällt unten auf den Standardwert zurück.
             }
@@ -423,16 +436,6 @@ public final class GuiConfig {
 
     private static long clamp(long value, long min, long max) {
         return Math.max(min, Math.min(max, value));
-    }
-
-    private static long snap(long value, long min, long max, long step) {
-        long clamped = clamp(value, min, max);
-        long offset = clamped - min;
-        long snapped = min + Math.round((double) offset / step) * step;
-        if (snapped > max) {
-            snapped = min + ((max - min) / step) * step;
-        }
-        return clamp(snapped, min, max);
     }
 
     /**
@@ -503,18 +506,14 @@ public final class GuiConfig {
      * @param prompt  Titel bzw. Frage der Eingabe
      * @param min     kleinster Wert (nur {@link Type#NUMBER})
      * @param max     größter Wert (nur {@link Type#NUMBER})
-     * @param step    Schrittweite des Reglers (nur {@link Type#NUMBER})
-     * @param initial Startwert des Reglers (nur {@link Type#NUMBER})
      * @param filter  Startfilter der Spielerauswahl
      * @param sort    Startsortierung der Spielerauswahl
      * @param pattern Antwortmuster einer Text-Eingabe oder {@code null}
      */
     public record Input(Type type,
                         String prompt,
-                        long min,
-                        long max,
-                        long step,
-                        long initial,
+                        BigDecimal min,
+                        BigDecimal max,
                         Filter filter,
                         Sort sort,
                         Pattern pattern) {
@@ -542,7 +541,8 @@ public final class GuiConfig {
         }
 
         public static Input text(String prompt, Pattern pattern) {
-            return new Input(Type.TEXT, prompt, 0, 0, 1, 0, Filter.ALL, Sort.NAME_ASC, pattern);
+            return new Input(Type.TEXT, prompt, BigDecimal.ZERO, BigDecimal.ZERO,
+                    Filter.ALL, Sort.NAME_ASC, pattern);
         }
     }
 

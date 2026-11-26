@@ -18,6 +18,7 @@ import java.util.logging.Logger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -31,7 +32,6 @@ class ConfigUpdaterTest {
     private static final Logger LOG = Logger.getLogger(ConfigUpdaterTest.class.getName());
 
     private static final String TEMPLATE = """
-            config-version: 2
             alpha: 1
             """;
 
@@ -46,14 +46,12 @@ class ConfigUpdaterTest {
     void ergaenztFehlendeSchluesselUndBehaeltWerte() {
         String template = """
                 # Kopfzeile
-                config-version: 2
                 alpha: 1
                 # Erklärung zu beta
                 beta: 2
                 """;
         String content = """
                 # Kopfzeile
-                config-version: 1
                 alpha: 9
                 """;
 
@@ -61,20 +59,17 @@ class ConfigUpdaterTest {
 
         assertEquals(9, merged.getInt("alpha"));
         assertEquals(2, merged.getInt("beta"));
-        assertEquals(2, merged.getInt("config-version"));
         assertEquals(List.of("Erklärung zu beta"), merged.getComments("beta"));
     }
 
     @Test
     void aktualisiertKommentareUndLaesstEigeneStehen() {
         String template = """
-                config-version: 2
                 # Neuer Standardkommentar
                 wert: 1
                 ohne: 2
                 """;
         String content = """
-                config-version: 1
                 # Alter Kommentar
                 wert: 5
                 # Eigener Kommentar
@@ -94,12 +89,10 @@ class ConfigUpdaterTest {
     @Test
     void behaeltZusatzschluesselUndReihenfolge() {
         String template = """
-                config-version: 2
                 alpha: 1
                 beta: 2
                 """;
         String content = """
-                config-version: 1
                 beta: 20
                 alpha: 10
                 zeta: 30
@@ -116,14 +109,71 @@ class ConfigUpdaterTest {
     }
 
     @Test
-    void versionWirdAufMaximumGesetzt() {
-        String older = "config-version: 1\nalpha: 9\n";
-        assertEquals(2, parse(merge(TEMPLATE, older, ConfigUpdater.Markup.NONE))
-                .getInt("config-version"));
+    void legacyVersionWirdAusDerDateiEntfernt() {
+        String merged = merge(TEMPLATE, "config-version: 2\nalpha: 5\n",
+                ConfigUpdater.Markup.NONE);
 
-        String newer = "config-version: 7\nalpha: 9\n";
-        assertEquals(7, parse(merge(TEMPLATE, newer, ConfigUpdater.Markup.NONE))
-                .getInt("config-version"));
+        assertFalse(merged.contains("config-version"), merged);
+        assertEquals(5, parse(merged).getInt("alpha"));
+    }
+
+    // ------------------------------------------------------------------
+    // Versiondatei
+    // ------------------------------------------------------------------
+
+    @Test
+    void versionDateiUebernimmtLegacyWertUndBleibtIdempotent() throws IOException {
+        Path config = Files.createDirectories(temp.resolve("config"));
+        Path versions = config.resolve("config-version.yml");
+        Path settings = config.resolve("settings.yml");
+        Files.writeString(settings, "config-version: 3\nalpha: 1\n", StandardCharsets.UTF_8);
+
+        assertEquals(3, ConfigUpdater.version(versions.toFile(), settings.toFile(), "settings.yml"));
+
+        String template = """
+                # Versionen
+                settings.yml: 6
+                gui.yml: 4
+                """;
+        assertTrue(ConfigUpdater.storeVersion(versions.toFile(), template, "settings.yml", 6, LOG));
+
+        String stored = Files.readString(versions, StandardCharsets.UTF_8);
+        assertTrue(stored.contains("# Versionen"), stored);
+        assertEquals(6, parse(stored).getInt("settings.yml"));
+        assertFalse(stored.contains("gui.yml"),
+                "nur erfolgreich abgeglichene Dateien werden eingetragen");
+        assertEquals(6, ConfigUpdater.version(versions.toFile(), settings.toFile(), "settings.yml"));
+
+        assertTrue(ConfigUpdater.storeVersion(versions.toFile(), template, "gui.yml", 4, LOG));
+        String both = Files.readString(versions, StandardCharsets.UTF_8);
+        assertTrue(both.contains("# Versionen"), both);
+        assertEquals(6, parse(both).getInt("settings.yml"));
+        assertEquals(4, parse(both).getInt("gui.yml"));
+
+        assertFalse(ConfigUpdater.storeVersion(versions.toFile(), template, "gui.yml", 4, LOG));
+        assertEquals(both, Files.readString(versions, StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void versionDateiGewinntGegenAelterenLegacySchluessel() throws IOException {
+        Path config = Files.createDirectories(temp.resolve("config"));
+        Path versions = config.resolve("config-version.yml");
+        Path settings = config.resolve("settings.yml");
+        Files.writeString(settings, "config-version: 2\nalpha: 1\n", StandardCharsets.UTF_8);
+        Files.writeString(versions, "settings.yml: 7\n", StandardCharsets.UTF_8);
+
+        assertEquals(7, ConfigUpdater.version(versions.toFile(), settings.toFile(), "settings.yml"));
+    }
+
+    @Test
+    void fehlendeVersionDateiWirdAngelegt() throws IOException {
+        Path versions = temp.resolve("config").resolve("config-version.yml");
+
+        assertTrue(ConfigUpdater.storeVersion(versions.toFile(), "# Versionen\n",
+                "settings.yml", 6, LOG));
+        assertTrue(Files.exists(versions));
+        assertEquals(6, parse(Files.readString(versions, StandardCharsets.UTF_8))
+                .getInt("settings.yml"));
     }
 
     // ------------------------------------------------------------------
@@ -133,14 +183,12 @@ class ConfigUpdaterTest {
     @Test
     void listenVonMapsBleibenStruktur() {
         String template = """
-                config-version: 2
                 pages:
                   - title: "&aStart"
                     lines:
                       - "&bZeile"
                 """;
         String content = """
-                config-version: 1
                 pages:
                   - title: "&cAlt"
                     lines:
@@ -158,7 +206,6 @@ class ConfigUpdaterTest {
     @Test
     void guiSchluesselBleibenUnveraendert() {
         String template = """
-                config-version: 2
                 items:
                   test:
                     name: "&aName"
@@ -171,7 +218,6 @@ class ConfigUpdaterTest {
                         pattern: "[&a]"
                 """;
         String content = """
-                config-version: 1
                 items:
                   test:
                     name: "&cAlt"
@@ -280,7 +326,7 @@ class ConfigUpdaterTest {
     @Test
     void ausgelieferteDateienSindIdempotent() throws IOException {
         for (String name : List.of("settings.yml", "messages.yml", "commands.yml",
-                "help.yml", "gui.yml")) {
+                "help.yml", "gui.yml", "roles.yml")) {
             String template = resource("config/" + name);
             String content = template + "\ncustom-key: \"custom\"\n";
             ConfigUpdater.Markup markup = ConfigUpdater.markupFor(name);
@@ -293,11 +339,32 @@ class ConfigUpdaterTest {
 
             YamlConfiguration parsed = parse(first);
             assertFalse(parsed.getKeys(false).isEmpty(), name + " muss Schlüssel enthalten");
-            assertNotNull(parsed.getString("config-version"), name + " muss config-version enthalten");
+            assertNull(parsed.getString("config-version"),
+                    name + " darf die Version nicht mehr selbst tragen");
 
             String firstLine = first.lines().filter(line -> !line.isBlank()).findFirst().orElse("");
             assertTrue(firstLine.startsWith("#"),
                     name + " muss den Kopfkommentar behalten, war: " + firstLine);
+        }
+    }
+
+    @Test
+    void ausgelieferteDateienTragenKeineEigeneVersion() throws IOException {
+        for (String name : List.of("settings.yml", "messages.yml", "commands.yml",
+                "help.yml", "gui.yml", "roles.yml")) {
+            String template = resource("config/" + name);
+            assertFalse(template.contains("config-version:"),
+                    name + " darf config-version nicht mehr enthalten");
+        }
+    }
+
+    @Test
+    void versionsDateiDecktAlleKonfigurationenAb() throws IOException {
+        YamlConfiguration versions = parse(resource("config/config-version.yml"));
+
+        for (String name : List.of("settings.yml", "messages.yml", "commands.yml",
+                "help.yml", "gui.yml", "roles.yml")) {
+            assertTrue(versions.getInt(name) > 0, name + " fehlt in config-version.yml");
         }
     }
 

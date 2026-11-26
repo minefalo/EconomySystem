@@ -36,6 +36,7 @@ public final class Settings {
     private StorageType storageType;
     private int saveIntervalSeconds;
     private String yamlFolder;
+    private String sqliteFile;
     private Mysql mysql;
     private Interest interest;
     private boolean testsEnabled;
@@ -89,13 +90,16 @@ public final class Settings {
         this.currency = new Currency(name, symbol, format, numberFormat, locale, decimals,
                 rounding, startingBalance, maxBalance, minBalance);
 
-        String rawType = config.getString("storage.type", "YAML");
+        String rawType = config.getString("storage.type", "SQLITE");
         this.storageType = parseStorageType(rawType);
 
         this.saveIntervalSeconds = Math.max(0, config.getInt("storage.save-interval-seconds", 300));
 
         String folder = config.getString("storage.yaml.folder", "accounts");
         this.yamlFolder = folder == null || folder.isBlank() ? "accounts" : folder.trim();
+
+        String sqlite = config.getString("storage.sqlite.file", "economy.db");
+        this.sqliteFile = sqlite == null || sqlite.isBlank() ? "economy.db" : sqlite.trim();
 
         this.mysql = new Mysql(
                 config.getString("storage.mysql.host", "localhost"),
@@ -443,8 +447,8 @@ public final class Settings {
         try {
             return StorageType.valueOf(raw.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException exception) {
-            plugin.getLogger().warning("Unbekannter storage.type '" + raw + "' - verwende YAML.");
-            return StorageType.YAML;
+            plugin.getLogger().warning("Unbekannter storage.type '" + raw + "' - verwende SQLITE.");
+            return StorageType.SQLITE;
         }
     }
 
@@ -572,6 +576,14 @@ public final class Settings {
 
     public String yamlFolder() {
         return yamlFolder;
+    }
+
+    /**
+     * Datei der SQLite-Datenbank, relativ zum {@code data}-Ordner
+     * ({@code storage.sqlite.file}).
+     */
+    public String sqliteFile() {
+        return sqliteFile;
     }
 
     public Mysql mysql() {

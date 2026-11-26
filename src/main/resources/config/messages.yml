@@ -3,17 +3,27 @@
 # ==========================================================
 # Formatierung: MiniMessage-Markup, z. B. <red>, <bold>, <gray>,
 # <#RRGGBB> für Hex-Farben und <reset> zum Zurücksetzen.
+# Wörtliche spitze Klammern werden mit \<...> geschrieben.
+#
 # Platzhalter werden automatisch ersetzt (z. B. %balance%, %player%).
 # %prefix% kann überall eingefügt werden; ohne %prefix% wird er
 # automatisch vor die Nachricht gesetzt.
+#
+# Schlüssel sind case-sensitive. Fehlt ein Schlüssel, zeigt das Plugin
+# den Schlüsselnamen an und loggt eine Warnung. Alte Schlüssel
+# (no-permission, usage-..., pay-recipient-offline) bleiben als
+# Fallback gültig; die neuen command.*-Schlüssel haben Vorrang.
+#
+# Die Listen help und help-admin gehören zu /eco help. Die mehrseitige
+# Admin-Hilfe aus help.yml wird nur von /eco admin help gelesen.
 # ==========================================================
-
-config-version: 8
 
 prefix: "<dark_red><bold>BC <reset><gold>EconomySystem<reset><red> » "
 
 # ------------------------------------------------------------------
-# Schlüssel nach dem Schema aus Commands.md (Abschnitt 9.1/9.2).
+# Neue Schlüssel nach dem Schema aus Commands.md (Abschnitt 9.1/9.2).
+# command._default enthält allgemeine Fehler und die Syntaxanzeige.
+# command.admin.* und command.pay.* enthalten pfadspezifische Texte.
 # Die bisherigen Schlüssel (no-permission, usage-…) bleiben als
 # Fallback gültig; die neuen Schlüssel haben Vorrang.
 # ------------------------------------------------------------------
@@ -45,6 +55,10 @@ command:
       insufficient: "<red>Du hast nicht genug Geld für diese Überweisung."
     remote-sent: "<green>Überweisung gebucht: <gold>%amount% <green>an <yellow>%player%<green>. <dark_gray>(tx %tx%)"
 
+# ------------------------------------------------------------------
+# Allgemeine Fallback-Texte. Sie werden verwendet, wenn ein neuer
+# command.*-Schlüssel fehlt oder ein Modul bewusst den alten Key nutzt.
+# ------------------------------------------------------------------
 no-permission: "<red>Dazu hast du keine Berechtigung."
 player-only: "<red>Dieser Befehl ist nur für Spieler verfügbar."
 read-only: "<red>Dieser Server ist schreibgeschützt (READ_ONLY). Geldbewegungen sind hier deaktiviert."
@@ -66,6 +80,8 @@ top-entry: "<dark_gray>#%rank% <yellow>%player% <dark_gray>» <gold>%balance%"
 top-empty: "<gray>Es sind noch keine Guthaben vorhanden."
 top-invalid-page: "<red>„%input%“ ist keine gültige Seite."
 
+# Älterer Schlüssel; wird von den neuen command.pay.error.*-Texten
+# abgelöst, bleibt aber als Fallback gültig.
 pay-recipient-offline: "<red>Der Empfänger muss für eine sichere Überweisung online sein."
 pay-self: "<red>Du kannst dir nicht selbst Geld überweisen."
 
@@ -77,6 +93,8 @@ balance-set: "<green>Das Guthaben von <yellow>%player% <green>wurde auf <gold>%b
 
 reload-success: "<green>Einstellungen, Nachrichten, Menü, Hilfe und Befehle wurden neu geladen."
 
+# Testbefehle. Sie verändern echte Kontostände und sind nur mit
+# tests.enabled: true sowie der passenden Permission erreichbar.
 tests-interest-disabled: "<red>Die Zinsen sind deaktiviert; die Simulation wurde nicht gestartet."
 tests-disabled: "<red>Die Test-Befehle sind deaktiviert. Setze in der settings.yml <yellow>tests.enabled: true<red> und lade mit <yellow>/economysystem-admin reload<red> neu."
 tests-cycles-invalid: "<red>Die Anzahl muss eine ganze Zahl zwischen 1 und %max% sein."
@@ -87,6 +105,9 @@ tests-failed: "<red>Die Simulation ist fehlgeschlagen: <yellow>%error%"
 # Noch gelesen: usage-economysystem (Vorschlag bei unbekanntem Pfad) und die
 # beiden Altformen von /economysystem-admin. Alle anderen Pfade melden ihre
 # Syntax über command._default.usage aus dem Modul.
+# Die folgenden beiden Keys gehören nur zu den Altformen:
+#   /economysystem-admin money <konto> <aktion> <betrag>
+#   /economysystem-admin zinsen <typ> set <faktor>
 usage-economysystem: "<red>Verwendung: <yellow>/economysystem help"
 usage-admin-money: '<red>Verwendung: <yellow>/economysystem-admin money \<Spieler> \<add|remove|set> \<Betrag>'
 usage-admin-zinsen: '<red>Verwendung: <yellow>/economysystem-admin zinsen \<spar|kredit> set \<Faktor>'
@@ -106,17 +127,10 @@ gui-input-empty: "<red>Bitte gib einen Wert ein."
 gui-input-unavailable: "<red>Die Eingabe konnte nicht geöffnet werden."
 gui-input-invalid: "<red>Diese Eingabe ist nicht erlaubt: ein einzelner Wert ohne Leerzeichen und ohne --."
 
-gui-slider-track: "<yellow>%value%"
-gui-slider-value: "<yellow>Aktueller Wert: <gold>%value%"
-gui-slider-hint: "<gray>Klicke auf die Glasscheiben, um den Wert zu ändern."
-gui-slider-decrease: "<red>- %amount%"
-gui-slider-increase: "<green>+ %amount%"
-gui-slider-decrease-hint: "<gray>Verringert den Wert."
-gui-slider-increase-hint: "<gray>Erhöht den Wert."
-gui-slider-confirm: "<green><bold>Übernehmen"
-gui-slider-cancel: "<red><bold>Abbrechen"
-gui-slider-reset: "<yellow><bold>Zurücksetzen"
 gui-anvil-hint: "<gray>Benenne den Nametag und klicke auf das Ergebnis."
+gui-anvil-number-hint: "<gray>Nur Ziffern zählen; ein Komma wird zum Punkt."
+gui-input-number-invalid: "<red>„%input%“ ist keine gültige Zahl."
+gui-input-number-range: "<red>Die Zahl muss zwischen <yellow>%min% <red>und <yellow>%max% <red>liegen."
 gui-confirm-title: "<dark_gray><bold>Bestätigung erforderlich"
 gui-confirm-accept: "<green><bold>Bestätigen"
 gui-confirm-cancel: "<red><bold>Abbrechen"
@@ -124,8 +138,10 @@ gui-confirm-hint: "<gray>Diese Aktion ändert Guthaben unwiderruflich."
 
 gui-picker-search-title: "<dark_gray>Suche"
 gui-picker-search: "<yellow><bold>Suche"
-gui-picker-search-hint: "<gray>Klicke, um nach einem Spieler zu suchen."
+gui-picker-search-hint: "<gray>Klicke zum Suchen. Feld leeren löscht den Suchfilter."
 gui-picker-search-active: "<gray>Suche: <white>%search%"
+gui-picker-reset: "<yellow><bold>Filter zurücksetzen"
+gui-picker-reset-hint: "<gray>Setzt Suche, Filter und Sortierung zurück."
 gui-picker-filter: "<yellow><bold>Filter: <white>%filter%"
 gui-picker-filter-hint: "<gray>Klicke, um den Filter zu wechseln."
 gui-picker-filter-all: "Alle"
@@ -143,8 +159,19 @@ gui-picker-cancel: "<red><bold>Abbrechen"
 gui-picker-loading: "<gray>Spieler werden geladen ..."
 gui-picker-empty: "<gray>Keine Spieler gefunden."
 gui-picker-head-name: "<yellow>%player%"
+gui-picker-head-status-online: "<gray>Status: <green>online"
+gui-picker-head-status-offline: "<gray>Status: <red>offline"
 gui-picker-head-balance: "<gray>Guthaben: <gold>%balance%"
+gui-picker-head-limit: "<gray>Kreditrahmen: <yellow>%limit%"
+gui-picker-head-debt: "<gray>Offene Kredite: <red>%debt%"
+gui-picker-head-loans: "<gray>Laufende Kredite: <yellow>%loans%<gray>/<yellow>%max%"
 gui-picker-head-click: "<dark_gray>» <gray>Klicke, um diesen Spieler zu wählen."
+gui-picker-confirm-title: "<dark_gray><bold>Spieler bestätigen"
+gui-picker-confirm-accept: "<green><bold>Bestätigen"
+gui-picker-confirm-cancel: "<red><bold>Abbrechen"
+gui-picker-confirm-hint: "<gray>Übernimmt <yellow>%player% <gray>als Antwort."
+gui-picker-confirm-back-hint: "<gray>Zurück zur Spielerauswahl."
+gui-picker-confirm-selected: "<dark_gray>» <gray>Bestätigen übernimmt den Spieler, Abbrechen führt zurück."
 
 credit-disabled: "<red>Das Kreditsystem ist derzeit deaktiviert."
 credit-invalid-days: "<red>Die Laufzeit muss eine ganze Zahl zwischen %min% und %max% Tagen sein."
@@ -171,26 +198,34 @@ credit-forced-paid: "<red>Dein Kredit über <yellow>%credit% <red>ist fällig. E
 credit-hardship: "<red>Dein Kredit ist fällig und dein Guthaben hat die Untergrenze von <yellow>%floor% <red>erreicht. <yellow>%waived% <red>Zinsen wurden erlassen, offen bleiben <yellow>%remaining%<red>. Alle Einnahmen werden automatisch zur Rückzahlung verwendet."
 credit-completed: "<green>Dein Kredit über <gold>%amount% <green>ist vollständig zurückgezahlt."
 
+# Seite 1 von /eco help (immer erlaubt).
 help:
   - "<gold><bold>Guthaben"
-  - "<yellow>/money <gray>- Zeigt dein Guthaben"
-  - '<yellow>/money \<Spieler> <gray>- Zeigt das Guthaben eines Spielers'
-  - "<yellow>/money top [Seite] <gray>- Zeigt die reichsten Spieler"
-  - '<yellow>/pay \<Spieler> \<Betrag> <gray>- Überweist Geld an einen Spieler'
-  - '<yellow>/kredit add \<Betrag> \<Tage> <gray>- Nimmt einen Kredit auf'
-  - "<yellow>/kredit bezahlen [Betrag] <gray>- Zahlt deinen Kredit zurück"
-  - "<yellow>/kredit info <gray>- Zeigt Guthaben, Rahmen und laufende Kredite"
-  - "<yellow>/economysystem-gui <gray>- Öffnet das klickbare Wirtschafts-Menü"
+  - "<yellow>/eco balance <gray>- Zeigt dein Guthaben"
+  - '<yellow>/eco balance \<Spieler> <gray>- Zeigt fremdes Guthaben (Recht: balance.other)'
+  - "<yellow>/eco balance top [Seite] <gray>- Zeigt die reichsten Spieler"
+  - '<yellow>/eco pay \<Spieler> \<Betrag> <gray>- Überweist Geld (LOCAL: Ziel online)'
+  - '<yellow>/eco credit take \<Betrag> \<Tage> <gray>- Nimmt einen Kredit auf'
+  - "<yellow>/eco credit repay [Betrag] <gray>- Zahlt deinen Kredit zurück"
+  - "<yellow>/eco credit info <gray>- Zeigt Guthaben, Rahmen und laufende Kredite"
+  - "<yellow>/eco gui [Menü] <gray>- Öffnet das klickbare Wirtschafts-Menü"
+  - "<yellow>/eco help [Seite] <gray>- Zeigt diese Hilfe"
+  - "<dark_gray>Kurzformen: /money, /pay, /kredit, /economysystem-gui"
 
+# Seite 2 von /eco help; nur mit Admin-Recht sichtbar.
+# Die mehrseitige Hilfe aus help.yml wird über /eco admin help geöffnet.
 help-admin:
-  - "<gold><bold>EconomySystem"
-  - "<yellow>/economysystem help <gray>- Zeigt diese Hilfe"
-  - "<yellow>/economysystem-admin help <gray>- Zeigt die Admin-Hilfe (mehrere Seiten)"
-  - "<yellow>/economysystem-admin info <gray>- Zeigt Informationen zum System"
-  - "<yellow>/economysystem-admin reload <gray>- Lädt alle Konfigurationen neu"
-  - "<yellow>/economysystem-gui admin <gray>- Öffnet das Admin-Menü"
-  - '<yellow>/economysystem-admin tests zins-zyklus add \<Anzahl> <gray>- Simuliert Zinszyklen (nur mit tests.enabled)'
+  - "<gold><bold>EconomySystem <gray>- Admin"
+  - "<yellow>/eco admin help [Seite] <gray>- Zeigt die Admin-Hilfe aus help.yml"
+  - "<yellow>/eco admin info <gray>- Zeigt Informationen zum System"
+  - "<yellow>/eco admin reload <gray>- Lädt alle Konfigurationen neu"
+  - "<yellow>/eco gui admin <gray>- Öffnet das Admin-Menü"
+  - '<yellow>/eco admin balance add|remove \<Spieler> \<Betrag> <gray>- Ändert Guthaben'
+  - '<yellow>/eco admin balance set|reset \<Spieler> [\<Betrag>] --confirm <gray>- Exakt setzen/zurücksetzen'
+  - '<yellow>/eco admin test interest-cycle add \<Anzahl> <gray>- Nur mit tests.enabled'
 
+# /eco info und /eco admin info. %version%, %storage%, %currency% usw.
+# werden vom Info-Modul gefüllt.
 info:
   - "<gold><bold>EconomySystem <gray>v%version%"
   - "<gray>Speicher: <yellow>%storage%"
@@ -207,11 +242,14 @@ info:
   - "<gray>Zinszyklus: <yellow>%interest-cycle%"
   - "<gray>Vault: <yellow>%vault%"
 
+# Statuswerte für die Vault-Zeile in /eco info.
 vault-status-missing: "nicht installiert"
 vault-status-disabled: "deaktiviert"
 vault-status-failed: "Registrierung fehlgeschlagen"
 vault-status-active: "aktiv (%priority%)"
 
+# Admin-Ausgaben. balance-reset und interest-set werden nur nach
+# erfolgreicher Prüfung gesendet.
 balance-reset: "<green>Das Guthaben von <yellow>%player% <green>wurde auf das Startguthaben von <gold>%balance% <green>zurückgesetzt."
 interest-set: "<green>Der %type% <green>wurde auf <gold>%factor% <green>gesetzt."
 interest-credit-hint: "<gray>Der Kreditzins gilt ab sofort für neue Kredite."

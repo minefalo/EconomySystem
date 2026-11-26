@@ -64,10 +64,10 @@ public final class BalanceModule extends AbstractModule {
         List<String> args = context.args().positional();
         CompletableFuture<?> preparation = CompletableFuture.completedFuture(null);
         if (sender instanceof Player player && args.isEmpty()
-                && CommandPermissions.granted(sender, PERMISSION_BALANCE)) {
+                && CommandPermissions.granted(plugin.permissions(), sender, PERMISSION_BALANCE)) {
             preparation = economy.accountAsync(player.getUniqueId(), player.getName());
         }
-        if (CommandPermissions.granted(sender, PERMISSION_OTHERS) && args.size() == 1
+        if (CommandPermissions.granted(plugin.permissions(), sender, PERMISSION_OTHERS) && args.size() == 1
                 && !args.get(0).equalsIgnoreCase("help")) {
             preparation = CompletableFuture.allOf(preparation, economy.findAsync(args.get(0)));
         }
@@ -87,7 +87,7 @@ public final class BalanceModule extends AbstractModule {
             return CommandResult.handled();
         }
         if (args.get(0).equalsIgnoreCase("help")) {
-            if (!CommandPermissions.granted(sender, PERMISSION_BALANCE)) {
+            if (!CommandPermissions.granted(plugin.permissions(), sender, PERMISSION_BALANCE)) {
                 return CommandResult.rejected("command._default.error.no-permission");
             }
             messages().sendList(sender, "help");
@@ -102,7 +102,7 @@ public final class BalanceModule extends AbstractModule {
             messages().sendList(sender, "help");
             return CommandResult.handled();
         }
-        if (!CommandPermissions.granted(sender, PERMISSION_BALANCE)) {
+        if (!CommandPermissions.granted(plugin.permissions(), sender, PERMISSION_BALANCE)) {
             return CommandResult.rejected("command._default.error.no-permission");
         }
 
@@ -114,7 +114,7 @@ public final class BalanceModule extends AbstractModule {
     }
 
     private CommandResult showOther(CommandSender sender, String playerName) {
-        if (!CommandPermissions.granted(sender, PERMISSION_OTHERS)) {
+        if (!CommandPermissions.granted(plugin.permissions(), sender, PERMISSION_OTHERS)) {
             return CommandResult.rejected("command._default.error.no-permission");
         }
 
@@ -139,11 +139,11 @@ public final class BalanceModule extends AbstractModule {
 
         // "top" ist ein eigener Knoten und wird vom Router vorgeschlagen.
         List<String> options = new ArrayList<>();
-        if (CommandPermissions.granted(sender, PERMISSION_BALANCE)) {
+        if (CommandPermissions.granted(plugin.permissions(), sender, PERMISSION_BALANCE)) {
             options.add("help");
         }
-        if (CommandPermissions.granted(sender, PERMISSION_OTHERS)) {
-            options.addAll(onlinePlayerNames());
+        if (CommandPermissions.granted(plugin.permissions(), sender, PERMISSION_OTHERS)) {
+            options.addAll(playerNameSuggestions(prefix));
         }
         return filter(options, prefix);
     }

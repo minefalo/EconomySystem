@@ -237,7 +237,7 @@ public final class AdminModule extends AbstractModule {
         String word = raw.get(0).toLowerCase(Locale.ROOT);
         if (raw.size() == 2) {
             return switch (word) {
-                case "money", "geld" -> filter(onlinePlayerNames(), raw.get(1));
+                case "money", "geld" -> playerNameSuggestions(raw.get(1));
                 case "zinsen", "interest" -> filter(List.of("spar", "kredit"), raw.get(1));
                 case "help" -> filter(pageSuggestions(Math.max(1, helpBook.pageCount())), raw.get(1));
                 default -> List.of();

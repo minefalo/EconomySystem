@@ -1,5 +1,6 @@
 package de.Minefalo.economySystem.command;
 
+import de.Minefalo.economySystem.permission.PermissionService;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
@@ -45,14 +46,23 @@ public final class CommandPermissions {
      * Prüft einen bisherigen Knoten und den zugehörigen neuen Knoten.
      */
     public static boolean granted(CommandSender sender, String legacyNode) {
+        return granted(null, sender, legacyNode);
+    }
+
+    /**
+     * Wie {@link #granted(CommandSender, String)}, berücksichtigt aber
+     * zusätzlich die in der {@code roles.yml} definierten Rollen.
+     */
+    public static boolean granted(PermissionService permissions, CommandSender sender,
+                                  String legacyNode) {
         if (legacyNode == null || legacyNode.isEmpty()) {
             return true;
         }
-        if (sender.hasPermission(legacyNode)) {
+        if (has(permissions, sender, legacyNode)) {
             return true;
         }
         String modern = LEGACY_TO_MODERN.get(legacyNode);
-        return modern != null && sender.hasPermission(modern);
+        return modern != null && has(permissions, sender, modern);
     }
 
     /**
@@ -63,15 +73,30 @@ public final class CommandPermissions {
      * Prüfungen selbst vornimmt; dann lässt der Router durch.</p>
      */
     public static boolean granted(CommandSender sender, CommandTree.Node node) {
+        return granted(null, sender, node);
+    }
+
+    /**
+     * Wie {@link #granted(CommandSender, CommandTree.Node)}, berücksichtigt
+     * aber zusätzlich die in der {@code roles.yml} definierten Rollen.
+     */
+    public static boolean granted(PermissionService permissions, CommandSender sender,
+                                  CommandTree.Node node) {
         if (node.permission().isEmpty()) {
             return true;
         }
         for (String candidate : candidates(node)) {
-            if (sender.hasPermission(candidate)) {
+            if (has(permissions, sender, candidate)) {
                 return true;
             }
         }
         return false;
+    }
+
+    private static boolean has(PermissionService permissions, CommandSender sender, String node) {
+        return permissions == null
+                ? sender.hasPermission(node)
+                : permissions.has(sender, node);
     }
 
     /**
@@ -84,9 +109,18 @@ public final class CommandPermissions {
      * Vervollständigung können damit nicht auseinanderlaufen.</p>
      */
     public static boolean visible(CommandTree.Node node, CommandSender sender) {
+        return visible(null, node, sender);
+    }
+
+    /**
+     * Wie {@link #visible(CommandTree.Node, CommandSender)}, berücksichtigt
+     * aber zusätzlich die in der {@code roles.yml} definierten Rollen.
+     */
+    public static boolean visible(PermissionService permissions, CommandTree.Node node,
+                                  CommandSender sender) {
         if (!node.hasModule()) {
             for (CommandTree.Node child : node.children()) {
-                if (visible(child, sender)) {
+                if (visible(permissions, child, sender)) {
                     return true;
                 }
             }
@@ -95,16 +129,24 @@ public final class CommandPermissions {
         if (node.playerOnly() && !(sender instanceof Player)) {
             return false;
         }
-        return granted(sender, node);
+        return granted(permissions, sender, node);
     }
 
     /**
      * @return die Segmente der Kinder, die der Aufrufer sehen und ausführen darf
      */
     public static List<String> visibleSegments(CommandTree.Node node, CommandSender sender) {
+        return visibleSegments(null, node, sender);
+    }
+
+    /**
+     * Wie {@link #visibleSegments(CommandTree.Node, CommandSender)}, mit Rollen.
+     */
+    public static List<String> visibleSegments(PermissionService permissions, CommandTree.Node node,
+                                               CommandSender sender) {
         List<String> segments = new ArrayList<>();
         for (CommandTree.Node child : node.children()) {
-            if (visible(child, sender)) {
+            if (visible(permissions, child, sender)) {
                 segments.add(child.segment());
             }
         }

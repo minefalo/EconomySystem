@@ -89,6 +89,6 @@ public final class AdminCreditListModule extends AbstractModule {
         if (raw.size() != 1) {
             return List.of();
         }
-        return filter(onlinePlayerNames(), raw.get(0));
+        return playerNameSuggestions(raw.get(0));
     }
 }

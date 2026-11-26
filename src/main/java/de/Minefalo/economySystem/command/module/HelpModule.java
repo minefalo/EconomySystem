@@ -70,7 +70,7 @@ public final class HelpModule extends AbstractModule {
         }
 
         if (page > 1) {
-            if (!CommandPermissions.granted(sender, PERMISSION_ADMIN)) {
+            if (!CommandPermissions.granted(plugin.permissions(), sender, PERMISSION_ADMIN)) {
                 return CommandResult.rejected("command._default.error.no-permission");
             }
             messages().sendList(sender, "help-admin");
@@ -78,7 +78,7 @@ public final class HelpModule extends AbstractModule {
         }
 
         messages().sendList(sender, "help");
-        if (CommandPermissions.granted(sender, PERMISSION_ADMIN)) {
+        if (CommandPermissions.granted(plugin.permissions(), sender, PERMISSION_ADMIN)) {
             messages().sendList(sender, "help-admin");
         }
         return CommandResult.handled();

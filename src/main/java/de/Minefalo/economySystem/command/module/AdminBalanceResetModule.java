@@ -86,7 +86,7 @@ public final class AdminBalanceResetModule extends AbstractModule {
     public List<String> complete(CommandContext context) {
         List<String> raw = context.args().raw();
         if (raw.size() == 1) {
-            return filter(onlinePlayerNames(), raw.get(0));
+            return playerNameSuggestions(raw.get(0));
         }
         return List.of();
     }

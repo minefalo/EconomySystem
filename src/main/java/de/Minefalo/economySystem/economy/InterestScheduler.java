@@ -1,6 +1,7 @@
 package de.Minefalo.economySystem.economy;
 
 import de.Minefalo.economySystem.EconomySystem;
+import de.Minefalo.economySystem.command.CommandPermissions;
 import de.Minefalo.economySystem.config.Settings;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitTask;
@@ -118,7 +119,8 @@ public final class InterestScheduler {
             for (Player player : plugin.getServer().getOnlinePlayers()) {
                 BigDecimal credit = result.credits().get(player.getUniqueId());
                 if (credit == null || credit.signum() <= 0
-                        || !player.hasPermission("economysystem.balance")) {
+                        || !CommandPermissions.granted(plugin.permissions(), player,
+                                "economysystem.balance")) {
                     continue;
                 }
                 plugin.messages().send(player, "interest-credited",

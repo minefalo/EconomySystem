@@ -181,6 +181,21 @@ final class TestCommands {
         }
     }
 
+    /** Version einer Datei aus der ausgelieferten {@code config-version.yml}. */
+    @SuppressWarnings("unchecked")
+    static int configVersion(String fileName) {
+        try (InputStream input = TestCommands.class.getClassLoader()
+                .getResourceAsStream("config/config-version.yml")) {
+            assertNotNull(input, "config/config-version.yml fehlt im Klassenpfad");
+            Map<String, Object> versions = new Yaml().load(input);
+            Object version = versions.get(fileName);
+            assertNotNull(version, fileName + " fehlt in config-version.yml");
+            return ((Number) version).intValue();
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
+    }
+
     /**
      * Prüft die Kurzbefehle mit dem echten Validator des Routers - so fällt
      * auch ein kaputter Pfad oder eine Warnung beim Laden auf.

@@ -1,5 +1,8 @@
 package de.Minefalo.economySystem.economy;
 
+import de.Minefalo.economySystem.api.BuchungsErgebnis;
+import de.Minefalo.economySystem.api.BuchungsTyp;
+import de.Minefalo.economySystem.api.event.EconomyTransactionEvent;
 import de.Minefalo.economySystem.config.Settings;
 import de.Minefalo.economySystem.currency.Currency;
 import de.Minefalo.economySystem.storage.AccountData;
@@ -22,11 +25,16 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,7 +54,12 @@ public final class EconomyService {
     private static final DateTimeFormatter CYCLE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm");
 
     private final Map<UUID, Account> accounts = new ConcurrentHashMap<>();
+    /** Zuletzt bekannter Name je Konto, auch für nicht geladene Offline-Konten. */
+    private final Map<UUID, String> knownNames = new ConcurrentHashMap<>();
     private final ExecutorService executor;
+    /** Schneller Idempotenz-Cache der zuletzt über die API gebuchten IDs. */
+    private final Set<UUID> processedTransactions =
+            Collections.synchronizedSet(new TransactionCache());
     private IncomeHandler incomeHandler;
 
     private BukkitTask autoSaveTask;
@@ -65,8 +78,54 @@ public final class EconomyService {
 
     public void init() {
         storage.init();
+        loadKnownNames();
         scheduleAutoSave();
         scheduleAuditCleanup();
+    }
+
+    /**
+     * Füllt den Namensindex für die Tab-Vervollständigung mit allen
+     * gespeicherten Konten, auch von offline Spielern. Läuft im
+     * Storage-Executor, damit der Start nicht blockiert.
+     */
+    private void loadKnownNames() {
+        if (executor.isShutdown()) {
+            return;
+        }
+        try {
+            executor.execute(() -> {
+                try {
+                    for (AccountData data : storage.loadAll()) {
+                        rememberName(data.uniqueId(), data.name());
+                    }
+                } catch (RuntimeException exception) {
+                    plugin.getLogger().warning("Spielernamen konnten nicht geladen werden: "
+                            + exception.getMessage());
+                }
+            });
+        } catch (RuntimeException exception) {
+            plugin.getLogger().warning("Spielernamen konnten nicht geladen werden: "
+                    + exception.getMessage());
+        }
+    }
+
+    private void rememberName(UUID uniqueId, String name) {
+        if (uniqueId != null && name != null && !name.isBlank()) {
+            knownNames.put(uniqueId, name);
+        }
+    }
+
+    /**
+     * Alle bekannten Spielernamen aus Cache und Speicher, sortiert und ohne
+     * Duplikate. Für die Tab-Vervollständigung ohne Speicherzugriff nutzbar.
+     */
+    public List<String> knownPlayerNames() {
+        Set<String> names = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        for (Account account : accounts.values()) {
+            names.add(account.name());
+        }
+        names.addAll(knownNames.values());
+        return List.copyOf(names);
     }
 
     public Currency currency() {
@@ -102,10 +161,12 @@ public final class EconomyService {
             AccountData data = stored.get();
             // Gespeicherten Namen übernehmen; ein abweichender aktueller Name
             // wird anschließend von updateName() erkannt und gespeichert.
+            rememberName(uniqueId, data.name());
             return new Account(uniqueId, data.name(), currency().normalize(data.balance()));
         }
 
         Account account = new Account(uniqueId, name, currency().startingBalance());
+        rememberName(uniqueId, name);
         account.markDirty();
         saveAsync(account);
         return account;
@@ -116,6 +177,7 @@ public final class EconomyService {
             return;
         }
         account.name(name);
+        rememberName(account.uniqueId(), name);
         saveAsync(account);
     }
 
@@ -149,8 +211,11 @@ public final class EconomyService {
         }
         try {
             return CompletableFuture.supplyAsync(() -> storage.load(uniqueId)
-                    .map(data -> accounts.computeIfAbsent(data.uniqueId(),
-                            id -> new Account(id, data.name(), currency().normalize(data.balance())))),
+                    .map(data -> {
+                        rememberName(data.uniqueId(), data.name());
+                        return accounts.computeIfAbsent(data.uniqueId(),
+                                id -> new Account(id, data.name(), currency().normalize(data.balance())));
+                    }),
                     executor);
         } catch (RuntimeException exception) {
             return CompletableFuture.failedFuture(exception);
@@ -172,8 +237,11 @@ public final class EconomyService {
                 if (cached.isPresent()) {
                     return cached;
                 }
-                return storage.loadByName(name).map(data -> accounts.computeIfAbsent(data.uniqueId(),
-                        id -> new Account(id, data.name(), currency().normalize(data.balance()))));
+                return storage.loadByName(name).map(data -> {
+                    rememberName(data.uniqueId(), data.name());
+                    return accounts.computeIfAbsent(data.uniqueId(),
+                            id -> new Account(id, data.name(), currency().normalize(data.balance())));
+                });
             }, executor);
         } catch (RuntimeException exception) {
             return CompletableFuture.failedFuture(exception);
@@ -192,8 +260,11 @@ public final class EconomyService {
                 if (cached.isPresent()) {
                     return cached;
                 }
-                return storage.loadByName(name).map(data -> accounts.computeIfAbsent(data.uniqueId(),
-                        id -> new Account(id, data.name(), currency().normalize(data.balance()))));
+                return storage.loadByName(name).map(data -> {
+                    rememberName(data.uniqueId(), data.name());
+                    return accounts.computeIfAbsent(data.uniqueId(),
+                            id -> new Account(id, data.name(), currency().normalize(data.balance())));
+                });
             }, executor);
         } catch (RuntimeException exception) {
             return CompletableFuture.failedFuture(exception);
@@ -228,7 +299,9 @@ public final class EconomyService {
                         future.complete(Optional.of(cached.get().balance()));
                         return;
                     }
-                    future.complete(storage.loadByName(name).map(AccountData::balance));
+                    Optional<AccountData> stored = storage.loadByName(name);
+                    stored.ifPresent(data -> rememberName(data.uniqueId(), data.name()));
+                    future.complete(stored.map(AccountData::balance));
                 } catch (Throwable throwable) {
                     future.completeExceptionally(throwable);
                 }
@@ -271,6 +344,7 @@ public final class EconomyService {
                     // Der Speicher liefert nur die besten Einträge; loadAll()
                     // bleibt dem Zinszyklus vorbehalten (SICHERHEITSAUDIT, ROT-2).
                     for (AccountData data : storage.loadTop(maximum, includeZeroBalances)) {
+                        rememberName(data.uniqueId(), data.name());
                         balances.put(data.uniqueId(), data);
                     }
                     for (Account account : accounts.values()) {
@@ -313,6 +387,7 @@ public final class EconomyService {
                 try {
                     Map<UUID, AccountData> balances = new LinkedHashMap<>();
                     for (AccountData data : storage.loadAll()) {
+                        rememberName(data.uniqueId(), data.name());
                         balances.put(data.uniqueId(), data);
                     }
                     for (Account account : accounts.values()) {
@@ -353,6 +428,9 @@ public final class EconomyService {
      * @return {@code false}, wenn das maximale Guthaben überschritten würde
      */
     public boolean deposit(Account account, BigDecimal amount) {
+        if (readOnly()) {
+            return false;
+        }
         BigDecimal normalized = currency().normalize(amount);
         if (!account.deposit(normalized, currency().maxBalance())) {
             return false;
@@ -372,6 +450,9 @@ public final class EconomyService {
      * @return {@code false}, wenn das maximale Guthaben überschritten würde
      */
     public boolean depositDirect(Account account, BigDecimal amount) {
+        if (readOnly()) {
+            return false;
+        }
         if (!account.deposit(currency().normalize(amount), currency().maxBalance())) {
             return false;
         }
@@ -410,6 +491,9 @@ public final class EconomyService {
      * @return {@code false}, wenn das Guthaben nicht ausreicht
      */
     public boolean withdraw(Account account, BigDecimal amount) {
+        if (readOnly()) {
+            return false;
+        }
         if (!account.withdraw(currency().normalize(amount))) {
             return false;
         }
@@ -418,6 +502,9 @@ public final class EconomyService {
     }
 
     public void setBalance(Account account, BigDecimal amount) {
+        if (readOnly()) {
+            return;
+        }
         account.setBalance(currency().normalize(amount));
         saveAsync(account);
     }
@@ -430,6 +517,9 @@ public final class EconomyService {
      *         Zielkonto das Maximum überschreiten würde
      */
     public boolean transfer(Account from, Account to, BigDecimal amount) {
+        if (readOnly()) {
+            return false;
+        }
         BigDecimal normalized = currency().normalize(amount);
         if (from.uniqueId().equals(to.uniqueId())) {
             return false;
@@ -444,12 +534,241 @@ public final class EconomyService {
 
         // Erst die Tilgung anstoßen: Sie speichert Konto und Kredit gemeinsam.
         // Danach werden beide Konten noch einmal gemeinsam geschrieben
-        // (MySQL: eine Transaktion, YAML: ein Journal).
+        // (SQLite/MySQL: eine Transaktion, YAML: ein Journal).
         notifyIncome(to, normalized);
         if (!executor.isShutdown()) {
             executor.execute(() -> saveAll(List.of(from.snapshot(), to.snapshot())));
         }
         return true;
+    }
+
+    // ------------------------------------------------------------------
+    // Entwickler-API (Dauerhafte, idempotente Buchungen)
+    // ------------------------------------------------------------------
+
+    /**
+     * {@code true}, wenn dieser Server im Modus {@code READ_ONLY} läuft.
+     *
+     * <p>Die Prüfung liegt bewusst in der Kernlogik und nicht nur im
+     * Befehls-Router: Auch Vault und die
+     * {@link de.Minefalo.economySystem.api.EconomyApi} buchen über diese
+     * Methoden und werden so zentral gesperrt.</p>
+     */
+    public boolean readOnly() {
+        return settings.network().readOnly();
+    }
+
+    /**
+     * Bucht einen Betrag dauerhaft und idempotent vom Konto ab. Das Future
+     * schließt erst ab, nachdem der neue Kontostand im Speicher geschrieben
+     * wurde.
+     *
+     * @see de.Minefalo.economySystem.api.EconomyApi#abbuchen
+     */
+    public CompletableFuture<BuchungsErgebnis> abbuchen(UUID transactionId, UUID spielerId,
+                                                        String spielerName, BigDecimal betrag,
+                                                        String quelle, String grund) {
+        return book(BuchungsTyp.ABBUCHUNG, transactionId, spielerId, spielerName,
+                betrag, quelle, grund);
+    }
+
+    /**
+     * Schreibt einen Betrag dauerhaft und idempotent gut. Das Future schließt
+     * erst ab, nachdem der neue Kontostand im Speicher geschrieben wurde.
+     *
+     * @see de.Minefalo.economySystem.api.EconomyApi#erstatten
+     */
+    public CompletableFuture<BuchungsErgebnis> erstatten(UUID transactionId, UUID spielerId,
+                                                         String spielerName, BigDecimal betrag,
+                                                         String quelle, String grund) {
+        return book(BuchungsTyp.ERSTATTUNG, transactionId, spielerId, spielerName,
+                betrag, quelle, grund);
+    }
+
+    private CompletableFuture<BuchungsErgebnis> book(BuchungsTyp typ, UUID transactionId,
+                                                     UUID spielerId, String spielerName,
+                                                     BigDecimal betrag, String quelle,
+                                                     String grund) {
+        if (transactionId == null || spielerId == null || betrag == null
+                || betrag.signum() <= 0) {
+            return CompletableFuture.completedFuture(BuchungsErgebnis.UNGUELTIGER_BETRAG);
+        }
+        BigDecimal amount = currency().normalize(betrag);
+        if (amount.signum() <= 0) {
+            return CompletableFuture.completedFuture(BuchungsErgebnis.UNGUELTIGER_BETRAG);
+        }
+        if (executor.isShutdown()) {
+            return CompletableFuture.completedFuture(BuchungsErgebnis.FEHLER);
+        }
+
+        String pluginName = normalizeSource(quelle);
+        String reason = grund == null || grund.isBlank() ? null : grund.trim();
+        String playerName = spielerName == null || spielerName.isBlank()
+                ? "unknown" : spielerName.trim();
+        CompletableFuture<BuchungsErgebnis> future = new CompletableFuture<>();
+        try {
+            executor.execute(() -> {
+                BuchungsErgebnis ergebnis;
+                try {
+                    ergebnis = applyBooking(typ, transactionId, spielerId, playerName,
+                            amount, pluginName, reason);
+                } catch (Throwable throwable) {
+                    plugin.getLogger().severe("Buchung " + transactionId + " (" + typ
+                            + ") ist fehlgeschlagen: " + throwable);
+                    ergebnis = BuchungsErgebnis.FEHLER;
+                }
+                fireTransactionEvent(transactionId, spielerId, playerName, amount, typ,
+                        pluginName, reason, ergebnis);
+                future.complete(ergebnis);
+            });
+        } catch (RuntimeException exception) {
+            plugin.getLogger().severe("Buchung " + transactionId
+                    + " konnte nicht eingeplant werden: " + exception.getMessage());
+            future.complete(BuchungsErgebnis.FEHLER);
+        }
+        return future;
+    }
+
+    private BuchungsErgebnis applyBooking(BuchungsTyp typ, UUID transactionId, UUID spielerId,
+                                          String spielerName, BigDecimal amount,
+                                          String quelle, String grund) {
+        if (readOnly()) {
+            return BuchungsErgebnis.NICHT_ERLAUBT;
+        }
+        if (processedTransactions.contains(transactionId)) {
+            return BuchungsErgebnis.DUPLIKAT;
+        }
+        if (hasStoredTransaction(transactionId)) {
+            processedTransactions.add(transactionId);
+            return BuchungsErgebnis.DUPLIKAT;
+        }
+
+        Account account = account(spielerId, spielerName);
+        synchronized (account) {
+            AccountData before = account.snapshot();
+            if (typ == BuchungsTyp.ABBUCHUNG) {
+                BigDecimal remaining = account.balance().subtract(amount);
+                if (account.balance().compareTo(amount) < 0
+                        || remaining.compareTo(currency().minBalance()) < 0) {
+                    return BuchungsErgebnis.KEIN_GELD;
+                }
+                if (!account.withdraw(amount)) {
+                    return BuchungsErgebnis.KEIN_GELD;
+                }
+            } else if (!account.deposit(amount, currency().maxBalance())) {
+                return BuchungsErgebnis.MAXIMUM;
+            }
+
+            AccountData after = account.snapshot();
+            try {
+                if (!storage.saveIdempotent(after, transactionId)) {
+                    // Ein anderer Server oder ein früherer Lauf hat die
+                    // Transaktion bereits gebucht: Änderung zurücknehmen.
+                    account.setBalance(before.balance());
+                    processedTransactions.add(transactionId);
+                    return BuchungsErgebnis.DUPLIKAT;
+                }
+            } catch (RuntimeException exception) {
+                account.setBalance(before.balance());
+                plugin.getLogger().severe("Buchung " + transactionId + " (" + typ
+                        + ") konnte nicht gespeichert werden: " + exception.getMessage());
+                recordBookingAudit(transactionId, spielerId, spielerName, amount, typ,
+                        quelle, grund, before.balance(), BuchungsErgebnis.FEHLER);
+                return BuchungsErgebnis.FEHLER;
+            }
+
+            account.markSaved(after);
+            processedTransactions.add(transactionId);
+            recordBookingAudit(transactionId, spielerId, spielerName, amount, typ,
+                    quelle, grund, after.balance(), BuchungsErgebnis.OK);
+        }
+
+        if (typ == BuchungsTyp.ERSTATTUNG) {
+            // Kredit-Tilgung wie bei einer regulären Gutschrift, aber auf dem
+            // Server-Thread: Kreditlogik und Spielerbenachrichtigungen sind
+            // dort sicher.
+            settleIncome(account, amount);
+        }
+        return BuchungsErgebnis.OK;
+    }
+
+    private boolean hasStoredTransaction(UUID transactionId) {
+        try {
+            return storage.hasTransaction(transactionId);
+        } catch (RuntimeException exception) {
+            // Die verbindliche Prüfung erfolgt beim Schreiben; ein Fehler der
+            // Vorabkontrolle darf die Buchung nicht verhindern.
+            plugin.getLogger().warning("Idempotenz-Prüfung für " + transactionId
+                    + " fehlgeschlagen: " + exception.getMessage());
+            return false;
+        }
+    }
+
+    private void settleIncome(Account account, BigDecimal amount) {
+        if (incomeHandler == null) {
+            return;
+        }
+        try {
+            if (Bukkit.isPrimaryThread()) {
+                notifyIncome(account, amount);
+                return;
+            }
+            plugin.getServer().getScheduler().runTask(plugin,
+                    () -> notifyIncome(account, amount));
+        } catch (RuntimeException exception) {
+            plugin.getLogger().warning("Kredit-Tilgung für " + account.uniqueId()
+                    + " konnte nicht eingeplant werden: " + exception.getMessage());
+        }
+    }
+
+    private void fireTransactionEvent(UUID transactionId, UUID spielerId, String spielerName,
+                                      BigDecimal betrag, BuchungsTyp typ, String quelle,
+                                      String grund, BuchungsErgebnis ergebnis) {
+        try {
+            Bukkit.getPluginManager().callEvent(new EconomyTransactionEvent(
+                    transactionId, spielerId, spielerName, betrag, typ, quelle, grund,
+                    ergebnis));
+        } catch (RuntimeException exception) {
+            plugin.getLogger().warning("EconomyTransactionEvent für " + transactionId
+                    + " konnte nicht ausgelöst werden: " + exception.getMessage());
+        }
+    }
+
+    /**
+     * Protokolliert eine API-Buchung (Abschnitt 11.6). Quelle und Grund
+     * landen gemeinsam im Begründungsfeld, z. B. {@code "SimplePlots: Claim 3;7"}.
+     */
+    private void recordBookingAudit(UUID transactionId, UUID spielerId, String spielerName,
+                                    BigDecimal betrag, BuchungsTyp typ, String quelle,
+                                    String grund, BigDecimal balanceAfter,
+                                    BuchungsErgebnis ergebnis) {
+        if (!settings.audit().enabled()) {
+            return;
+        }
+        try {
+            String reason = grund == null || grund.isBlank() ? quelle : quelle + ": " + grund;
+            int maximum = Math.max(1, settings.reasonMaxLength());
+            if (reason.length() > maximum) {
+                reason = reason.substring(0, maximum);
+            }
+            storage.recordAudit(new AuditEntry(transactionId, System.currentTimeMillis(),
+                    settings.network().id(), settings.network().scopeKey(),
+                    spielerId, spielerName, "API",
+                    typ == BuchungsTyp.ABBUCHUNG ? "api.abbuchen" : "api.erstatten",
+                    spielerId, spielerName, betrag, balanceAfter, reason,
+                    ergebnis == BuchungsErgebnis.OK
+                            ? AuditEntry.Result.APPLIED : AuditEntry.Result.REJECTED));
+        } catch (RuntimeException exception) {
+            plugin.getLogger().warning("Audit-Eintrag für " + transactionId
+                    + " konnte nicht geschrieben werden: " + exception.getMessage());
+        }
+    }
+
+    private static String normalizeSource(String quelle) {
+        if (quelle == null || quelle.isBlank()) {
+            return "API";
+        }
+        return quelle.trim();
     }
 
     /**
@@ -790,7 +1109,7 @@ public final class EconomyService {
 
     /**
      * Speichert eine Kontostandsänderung gemeinsam mit einer Kreditänderung.
-     * Im MySQL-Modus geschieht das in einer Transaktion, im YAML-Modus über
+     * Im SQLite-/MySQL-Modus geschieht das in einer Transaktion, im YAML-Modus über
      * ein Journal, das bei einem Absturz beim nächsten Start nachgezogen
      * wird. So kann eine Kreditaufnahme oder -tilgung nicht "halb"
      * gespeichert werden.
@@ -878,6 +1197,29 @@ public final class EconomyService {
      */
     public interface IncomeHandler {
         void onIncome(Account account, BigDecimal amount);
+    }
+
+    /**
+     * Idempotenz-Cache mit fester Obergrenze. Die verbindliche Prüfung liegt
+     * im Speicher; der Cache spart nur den Zugriff auf bereits bekannte IDs.
+     */
+    private static final class TransactionCache extends LinkedHashSet<UUID> {
+
+        private static final long serialVersionUID = 1L;
+        private static final int LIMIT = 10_000;
+
+        @Override
+        public boolean add(UUID transactionId) {
+            boolean added = super.add(transactionId);
+            if (size() > LIMIT) {
+                Iterator<UUID> iterator = iterator();
+                while (size() > LIMIT && iterator.hasNext()) {
+                    iterator.next();
+                    iterator.remove();
+                }
+            }
+            return added;
+        }
     }
 
     /**

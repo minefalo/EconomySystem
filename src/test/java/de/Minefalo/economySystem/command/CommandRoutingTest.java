@@ -29,7 +29,7 @@ class CommandRoutingTest {
     @Test
     @DisplayName("ausgelieferte commands.yml lädt warnungsfrei und zeigt nur auf Module")
     void shippedCommandsConfigLoadsWithoutWarnings() {
-        assertEquals(2, TestCommands.yaml().get("config-version"),
+        assertEquals(2, TestCommands.configVersion("commands.yml"),
                 "commands.yml muss die aktuelle Dateiversion tragen");
 
         // Das Laden selbst ist der Test: TestCommands prüft die Warnungen von

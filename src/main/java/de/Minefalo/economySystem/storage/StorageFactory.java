@@ -10,6 +10,7 @@ public final class StorageFactory {
 
     public static EconomyStorage create(JavaPlugin plugin, Settings settings) {
         return switch (settings.storageType()) {
+            case SQLITE -> new SqliteStorage(plugin, settings);
             case YAML -> new YamlStorage(plugin, settings);
             case MYSQL -> new MySqlStorage(plugin, settings);
         };
